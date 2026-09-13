@@ -2,6 +2,7 @@ import { result, type Result } from "@/src/modules/shared/result/result";
 
 type Name = {
   readonly value: string;
+  readonly firstName: string;
 };
 
 type NameErrorCode =
@@ -9,6 +10,7 @@ type NameErrorCode =
   | "NAME_REQUIRED"
   | "NAME_INVALID_FORMAT"
   | "NAME_INVALID_SPACING"
+  | "NAME_INVALID_WORD_COUNT"
   | "NAME_INVALID_CAPITALIZATION"
   | "NAME_ABBREVIATION_NOT_ALLOWED";
 
@@ -44,6 +46,10 @@ const hasInvalidCapitalization = (word: string): boolean => {
   return !isParticle(word) && !/\p{Lu}/u.test(word[0]);
 };
 
+const isFullName = (value: string): boolean => {
+  return value.split(" ").length >= 2;
+};
+
 const validateRequired = (input: string): Result<string, NameError> => {
   if (input.trim().length === 0) {
     return result.fail({
@@ -73,6 +79,17 @@ const validateFormat = (input: string): Result<string, NameError> => {
       code: "NAME_INVALID_FORMAT",
       message:
         "O nome deve conter somente letras e um único espaço entre palavras.",
+    });
+  }
+
+  return result.ok(input);
+};
+
+const validateWordCount = (input: string): Result<string, NameError> => {
+  if (!isFullName(input)) {
+    return result.fail({
+      code: "NAME_INVALID_WORD_COUNT",
+      message: "O nome completo deve conter nome e sobrenome.",
     });
   }
 
@@ -116,6 +133,7 @@ const tryCreate = (input: unknown): Result<Name, NameError[]> => {
     validateRequired(input),
     validateSpacing(input),
     validateFormat(input),
+    validateWordCount(input),
     validateAbbreviation(input),
     validateCapitalization(input),
   );
@@ -124,7 +142,10 @@ const tryCreate = (input: unknown): Result<Name, NameError[]> => {
     return validation;
   }
 
-  return result.ok({ value: input });
+  return result.ok({
+    value: input,
+    firstName: input.split(" ")[0],
+  });
 };
 
 const create = (value: string): Name => {

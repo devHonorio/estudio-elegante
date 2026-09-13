@@ -15,17 +15,7 @@ const getErrorCodes = (
 };
 
 describe("Name.tryCreate", () => {
-  it("create a valid simple name", () => {
-    const nameResult = Name.tryCreate("José");
-
-    expect(nameResult.success).toBe(true);
-
-    if (nameResult.success) {
-      expect(nameResult.value.value).toBe("José");
-    }
-  });
-
-  it("accept a valid multi-word name", () => {
+  it("create a valid full name", () => {
     const nameResult = Name.tryCreate("José Silva");
 
     expect(nameResult.success).toBe(true);
@@ -35,9 +25,17 @@ describe("Name.tryCreate", () => {
     }
   });
 
+  it("accept a valid multi-word name", () => {
+    const nameResult = Name.tryCreate("José Honorio");
+
+    expect(nameResult.success).toBe(true);
+
+    if (nameResult.success) {
+      expect(nameResult.value.value).toBe("José Honorio");
+    }
+  });
+
   it.each([
-    "José",
-    "João",
     "José Honorio",
     "João Pedro",
     "Maria da Silva",
@@ -46,7 +44,9 @@ describe("Name.tryCreate", () => {
     "Carlos do Carmo",
     "Ana dos Santos",
     "José das Graças",
-  ])("accept valid name %s", (input) => {
+    "Ana Júlia",
+    "Luís Felipe",
+  ])("accept valid full name %s", (input) => {
     const nameResult = Name.tryCreate(input);
 
     expect(nameResult.success).toBe(true);
@@ -56,14 +56,19 @@ describe("Name.tryCreate", () => {
     }
   });
 
-  it.each(["José", "João", "Márcio", "Ângela", "Luísa", "Cecília", "Gonçalves"])(
-    "accept unicode name %s",
-    (input) => {
-      const nameResult = Name.tryCreate(input);
+  it.each([
+    "José Honorio",
+    "João Pedro",
+    "Márcio Silva",
+    "Ângela Maria",
+    "Luísa Clara",
+    "Cecília Meireles",
+    "Gonçalves Dias",
+  ])("accept unicode full name %s", (input) => {
+    const nameResult = Name.tryCreate(input);
 
-      expect(nameResult.success).toBe(true);
-    },
-  );
+    expect(nameResult.success).toBe(true);
+  });
 
   it.each([123, null, undefined, {}, [], true])(
     "fail immediately with invalid type %s",
@@ -71,6 +76,15 @@ describe("Name.tryCreate", () => {
       const nameResult = Name.tryCreate(input);
 
       expect(getErrorCodes(nameResult)).toEqual(["NAME_INVALID_TYPE"]);
+    },
+  );
+
+  it.each(["José", "João", "Maria", "Ana"])(
+    "reject name without a surname %s",
+    (input) => {
+      const nameResult = Name.tryCreate(input);
+
+      expect(getErrorCodes(nameResult)).toEqual(["NAME_INVALID_WORD_COUNT"]);
     },
   );
 
@@ -96,7 +110,10 @@ describe("Name.tryCreate", () => {
   it("reject empty string", () => {
     const nameResult = Name.tryCreate("");
 
-    expect(getErrorCodes(nameResult)).toEqual(["NAME_REQUIRED"]);
+    expect(getErrorCodes(nameResult)).toEqual([
+      "NAME_REQUIRED",
+      "NAME_INVALID_WORD_COUNT",
+    ]);
   });
 
   it.each([
@@ -113,8 +130,6 @@ describe("Name.tryCreate", () => {
   });
 
   it.each([
-    ["joão", ["NAME_INVALID_CAPITALIZATION"]],
-    ["maria", ["NAME_INVALID_CAPITALIZATION"]],
     ["josé honório", ["NAME_INVALID_CAPITALIZATION"]],
     ["ana Paula", ["NAME_INVALID_CAPITALIZATION"]],
     ["João silva", ["NAME_INVALID_CAPITALIZATION"]],
@@ -126,15 +141,27 @@ describe("Name.tryCreate", () => {
   });
 
   it.each([
-    ["João-Silva", ["NAME_INVALID_FORMAT"]],
-    ["João_Silva", ["NAME_INVALID_FORMAT"]],
-    ["João.Silva", ["NAME_INVALID_FORMAT"]],
+    ["joão", ["NAME_INVALID_WORD_COUNT", "NAME_INVALID_CAPITALIZATION"]],
+    ["maria", ["NAME_INVALID_WORD_COUNT", "NAME_INVALID_CAPITALIZATION"]],
+  ])(
+    "reject a single word with invalid capitalization %s",
+    (input, expectedCodes) => {
+      const nameResult = Name.tryCreate(input);
+
+      expect(getErrorCodes(nameResult)).toEqual(expectedCodes);
+    },
+  );
+
+  it.each([
+    ["João-Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
+    ["João_Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
+    ["João.Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
     ["João, Silva", ["NAME_INVALID_FORMAT"]],
-    ["João/Silva", ["NAME_INVALID_FORMAT"]],
-    ["João@Silva", ["NAME_INVALID_FORMAT"]],
-    ["João#Silva", ["NAME_INVALID_FORMAT"]],
+    ["João/Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
+    ["João@Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
+    ["João#Silva", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
     ["João! Silva", ["NAME_INVALID_FORMAT"]],
-    ["João2", ["NAME_INVALID_FORMAT"]],
+    ["João2", ["NAME_INVALID_FORMAT", "NAME_INVALID_WORD_COUNT"]],
     ["J. Silva", ["NAME_INVALID_FORMAT"]],
     ["José H. Silva", ["NAME_INVALID_FORMAT"]],
   ])("reject invalid format %s", (input, expectedCodes) => {
@@ -171,7 +198,7 @@ describe("Name.tryCreate", () => {
   });
 
   it("returns explicit success/fail flags without throwing", () => {
-    const valid = Name.tryCreate("Cecília");
+    const valid = Name.tryCreate("Cecília Meireles");
     const invalid = Name.tryCreate(42);
 
     expect(valid.success).toBe(true);
@@ -192,6 +219,10 @@ describe("Name.create", () => {
     expect(() => Name.create("joão")).toThrow();
   });
 
+  it("throw for a single word", () => {
+    expect(() => Name.create("José")).toThrow();
+  });
+
   it("throw for an empty value", () => {
     expect(() => Name.create("")).toThrow();
   });
@@ -199,6 +230,20 @@ describe("Name.create", () => {
   it("never creates an invalid Name", () => {
     expect(() => Name.create("João  Silva")).toThrow();
     expect(() => Name.create(" J Silva")).toThrow();
+  });
+});
+
+describe("Name.firstName", () => {
+  it("exposes the first name as a property", () => {
+    const name = Name.create("José Silva");
+
+    expect(name.firstName).toBe("José");
+  });
+
+  it("exposes the first name from a multi-word name", () => {
+    const name = Name.create("Maria da Silva");
+
+    expect(name.firstName).toBe("Maria");
   });
 });
 
