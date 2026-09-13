@@ -1770,3 +1770,887 @@ O Value Object deve:
 - não duplicar suas validações em outras camadas.
 
 A skill deve sempre criar Value Objects de forma consistente com estas regras e com as demais convenções arquiteturais do projeto.
+
+---
+
+## 37. Value Objects com dependências externas (Provider / Parser / Factory / infra)
+
+Quando um Value Object precisar de uma biblioteca externa para validar, interpretar, fazer parsing, normalizar ou transformar um valor, utilizar uma abstração interna e uma implementação concreta isolada em `infra`.
+
+### 37.1 Princípio geral
+
+Um Value Object continua sendo um objeto literal funcional e **não deve conhecer diretamente bibliotecas externas**.
+
+O fluxo arquitetural correto é:
+
+```text
+Composition Root / Factory
+        ↓
+cria a implementação concreta
+        ↓
+Parser / Adapter
+        │
+        │ satisfaz
+        ▼
+Provider (contrato)
+        │
+        │ utilizado por
+        ▼
+Value Object
+```
+
+A biblioteca externa fica somente na implementação concreta localizada em `infra`.
+
+O Value Object nunca deve importar diretamente a biblioteca externa.
+
+IMPORTANTE: A Factory **não** é uma etapa de execução entre o Provider e o Value Object.
+
+A Factory existe para realizar a composição e configuração das dependências.
+
+Portanto, NÃO representar o fluxo como:
+
+```text
+Value Object
+    ↓
+Provider
+    ↓
+Parser
+    ↓
+Factory
+    ↓
+Biblioteca
+```
+
+Esse fluxo está incorreto.
+
+O conceito correto é:
+
+```text
+Factory
+    ↓
+cria/configura Parser concreto
+    ↓
+Parser satisfaz Provider
+    ↓
+Provider é configurado no Value Object
+    ↓
+Value Object pronto para uso
+```
+
+Depois que a composição foi realizada, o consumidor utiliza o Value Object normalmente:
+
+```ts
+Phone.create(input);
+Phone.tryCreate(input);
+```
+
+sem fornecer o Provider manualmente a cada chamada.
+
+### 37.2 O Value Object continua sendo funcional
+
+Não transformar Value Objects em classes.
+
+O padrão continua sendo um objeto literal funcional.
+
+Exemplo:
+
+```ts
+type Phone = {
+  readonly value: string;
+  readonly countryCode: string;
+}
+
+const create = (...) => ...
+
+const tryCreate = (...) => ...
+
+const Phone = {
+  create,
+  tryCreate,
+}
+```
+
+A API pública deve continuar sendo baseada em funções expostas através de um objeto literal.
+
+Não criar:
+```ts
+new Phone(...)
+```
+Não utilizar classes apenas para representar o Value Object.
+
+Classes somente podem ser utilizadas quando existir uma necessidade técnica real e justificada.
+
+### 37.3 `create` e `tryCreate` preservados
+
+Todo Value Object deve continuar seguindo as regras existentes:
+
+```text
+create()
+tryCreate()
+```
+
+A introdução de Provider, Parser ou biblioteca externa não deve alterar esse contrato.
+
+### 37.4 Provider como contrato
+
+Quando houver dependência externa, criar um Provider que represente a capacidade necessária pelo Value Object.
+
+O Provider é uma abstração interna do projeto.
+
+Ele **não deve conhecer a biblioteca externa** utilizada pela implementação.
+
+Exemplo:
+
+```ts
+type PhoneValidationProvider = {
+  validate(input: string): PhoneValidationResult;
+}
+```
+
+O nome do Provider deve representar a responsabilidade/capacidade, e não a tecnologia utilizada.
+
+Correto:
+```text
+PhoneValidationProvider
+```
+
+Incorreto:
+```text
+LibPhoneNumberProvider
+LibPhoneNumberJsProvider
+TwilioPhoneProvider
+```
+
+O contrato não deve revelar a implementação.
+
+### 37.5 Parser / Adapter como implementação concreta
+
+Quando a biblioteca externa realizar parsing, interpretação ou transformação, utilizar uma implementação com responsabilidade de Parser/Adapter.
+
+Utilizar o sufixo:
+
+```text
+.parser.ts
+```
+
+quando a responsabilidade principal for parsing.
+
+Exemplo:
+```text
+PhoneParser
+```
+
+O Parser concreto deve satisfazer o contrato do Provider por composição estrutural de tipos.
+
+Conceitualmente:
+
+```text
+PhoneValidationProvider
+        ▲
+        │ satisfies
+        │
+   PhoneParser
+        │
+        ▼
+biblioteca externa
+```
+
+O Parser pode ser um objeto literal ou uma factory funcional.
+
+**Não utilizar herança de classes** apenas para implementar o contrato.
+
+### 37.6 Isolamento da biblioteca externa
+
+A biblioteca externa deve existir somente em `infra`.
+
+Utilizar a convenção:
+
+```text
+src/modules/shared/
+├── value-object/
+│   └── phone/
+│       ├── phone.ts
+│       ├── phone-error.ts
+│       ├── phone-validation.provider.ts
+│       ├── phone-parser.ts
+│       ├── phone.factory.ts
+│       └── index.ts
+│
+└── infra/
+    └── phone/
+        └── libphonenumber-js/
+            └── libphonenumber-js.phone-parser.ts
+```
+
+O nome da camada deve ser:
+```text
+infra
+```
+e não:
+```text
+infrastructure
+```
+
+A implementação em `infra` pode importar a biblioteca externa.
+
+Exemplo:
+```text
+infra/phone/libphonenumber-js/
+└── libphonenumber-js.phone-parser.ts
+```
+
+é o local permitido para importar:
+```ts
+import ... from "libphonenumber-js";
+```
+
+O domínio não deve importar essa biblioteca.
+
+### 37.7 Regra para qualquer biblioteca externa
+
+Essa arquitetura não é exclusiva do `Phone`.
+
+Sempre que um Value Object precisar de uma biblioteca externa, aplicar o mesmo princípio.
+
+Exemplos:
+
+```text
+Email
+  ↓
+EmailValidationProvider
+  ↓
+EmailParser / Adapter
+  ↓
+infra/email/<biblioteca>
+```
+
+```text
+PostalCode
+  ↓
+PostalCodeProvider
+  ↓
+PostalCodeParser
+  ↓
+infra/postal-code/<biblioteca>
+```
+
+```text
+Document
+  ↓
+DocumentValidationProvider
+  ↓
+DocumentParser
+  ↓
+infra/document/<biblioteca>
+```
+
+Não criar essas abstrações quando não existir uma dependência externa real.
+
+### 37.8 A biblioteca externa não pode vazar
+
+Tipos, enums, erros, classes ou estruturas pertencentes à biblioteca externa não podem vazar para o domínio.
+
+Não fazer:
+```ts
+type PhoneValidationProvider = {
+  validate(): PhoneNumber;
+}
+```
+se `PhoneNumber` for um tipo pertencente à biblioteca externa.
+
+O correto é adaptar o resultado:
+
+```text
+Biblioteca externa
+        ↓
+Implementação concreta em infra
+        ↓
+Tipos internos
+        ↓
+Provider
+        ↓
+Value Object
+```
+
+O restante da aplicação não deve precisar saber qual biblioteca está sendo utilizada.
+
+Isso deve permitir trocar a biblioteca sem alterar o Value Object.
+
+### 37.9 Factory e composição
+
+A Factory existe para realizar a composição das dependências.
+
+Ela **não deve ser executada a cada chamada** de:
+```ts
+Phone.create(input)
+Phone.tryCreate(input)
+```
+
+Também **não deve exigir** que o consumidor forneça manualmente o Provider em cada chamada.
+
+Não fazer:
+```ts
+Phone.create(input, phoneProvider);
+```
+como padrão.
+
+O consumidor deve poder utilizar:
+```ts
+Phone.create(input);
+Phone.tryCreate(input);
+```
+
+A Factory deve montar o Value Object **uma vez**.
+
+Conceitualmente:
+```text
+createPhoneFactory()
+        ↓
+cria PhoneParser concreto
+        ↓
+PhoneParser satisfaz PhoneValidationProvider
+        ↓
+cria/configura Phone com esse Provider
+        ↓
+retorna Phone
+```
+
+Por exemplo:
+```ts
+const createPhone = (
+  provider: PhoneValidationProvider,
+) => {
+  const create = (input: unknown) => {
+    // utiliza provider
+  }
+
+  const tryCreate = (input: unknown) => {
+    // utiliza provider
+  }
+
+  return {
+    create,
+    tryCreate,
+  }
+}
+```
+
+E a composição:
+```ts
+const createPhoneFactory = () => {
+  const parser = createLibPhoneNumberParser()
+
+  return createPhone(parser)
+}
+```
+
+O resultado é um `Phone` já configurado.
+
+O consumidor não precisa conhecer o Parser nem o Provider concreto.
+
+### 37.10 Factory não contém regras de domínio
+
+A Factory não deve validar regras de negócio próprias do Value Object.
+
+Sua responsabilidade é somente composição.
+
+Exemplo:
+```text
+Factory
+→ escolhe implementação
+→ cria dependência
+→ injeta/configura dependência
+→ retorna VO configurado
+```
+
+Não:
+```text
+Factory
+→ valida nome
+→ valida telefone
+→ decide regras de domínio
+→ normaliza regras de negócio
+```
+
+As invariantes continuam pertencendo ao Value Object.
+
+### 37.11 Value Object deve depender da abstração
+
+O Value Object deve depender do contrato necessário, e não da implementação concreta.
+
+Exemplo conceitual:
+```text
+Phone
+  ↓ depende de
+PhoneValidationProvider
+```
+e não:
+```text
+Phone
+  ↓ depende de
+LibPhoneNumberJsPhoneParser
+```
+
+Isso permite trocar a implementação.
+
+### 37.12 Troca de biblioteca
+
+Uma das principais razões para esse padrão é permitir trocar a biblioteca externa sem modificar o Value Object.
+
+Atualmente:
+```text
+Phone
+  ↓
+PhoneValidationProvider
+  ↓
+PhoneParser
+  ↓
+libphonenumber-js
+```
+
+Futuramente:
+```text
+Phone
+  ↓
+PhoneValidationProvider
+  ↓
+OutroPhoneParser
+  ↓
+outra biblioteca
+```
+
+O `Phone` permanece inalterado.
+
+A alteração deve ficar restrita à implementação concreta e à composição/factory.
+
+### 37.13 Responsabilidade do Provider
+
+O Provider representa uma capacidade que o Value Object precisa.
+
+Por exemplo:
+```text
+PhoneValidationProvider
+```
+representa a capacidade de validar/interpretar um telefone.
+
+Separar claramente:
+```text
+Provider
+→ abstração da capacidade necessária
+
+Parser/Adapter
+→ implementação dessa capacidade
+
+Value Object
+→ invariantes e regras de domínio
+
+Factory
+→ composição das dependências
+
+infra
+→ detalhes tecnológicos externos
+```
+
+Não colocar regras de domínio no Provider.
+
+### 37.14 Responsabilidade do Parser
+
+Quando existir um Parser, sua responsabilidade deve ser:
+
+* encapsular a biblioteca externa;
+* realizar parsing/interpretação;
+* adaptar a API externa;
+* converter tipos externos para tipos internos;
+* esconder detalhes da biblioteca;
+* satisfazer o Provider;
+* não expor APIs da biblioteca;
+* não definir invariantes de domínio.
+
+O Parser não deve se tornar um segundo Value Object.
+
+### 37.15 Dependência externa somente em infra
+
+A regra de dependência deve ser:
+```text
+Domain / Value Object
+        ↓
+Abstração interna
+        ↓
+infra
+        ↓
+biblioteca externa
+```
+
+Nunca:
+```text
+Domain
+   ↓
+biblioteca externa
+```
+
+Nem:
+```text
+Provider
+   ↓
+biblioteca externa
+```
+quando o Provider representa apenas o contrato.
+
+Somente a implementação concreta localizada em `infra` pode conhecer a biblioteca.
+
+### 37.17 Testes
+
+O Value Object deve poder ser testado sem depender diretamente da biblioteca externa.
+
+Nos testes do Value Object, utilizar uma implementação fake do Provider quando apropriado.
+
+Exemplo:
+```text
+Phone
+  ↓
+FakePhoneValidationProvider
+```
+
+A aplicação real utiliza:
+```text
+Phone
+  ↓
+PhoneValidationProvider
+  ↓
+PhoneParser
+  ↓
+libphonenumber-js
+```
+
+Separar os testes em camadas:
+
+1. Testes do Value Object — invariantes, validações, `create`, `tryCreate`, erros, transformação do resultado do Provider, imutabilidade, regras de domínio.
+
+2. Testes do Parser/Adapter — integração com a biblioteca, parsing, conversão de tipos, conversão de erros, comportamento do adapter.
+
+3. Testes de integração — quando houver necessidade de verificar a composição real entre Factory + Parser + Provider + Value Object.
+
+### 37.18 Não criar abstrações desnecessárias
+
+Essa arquitetura não significa que todo Value Object deve possuir:
+```text
+Provider
+Parser
+Factory
+infra
+```
+automaticamente.
+
+Se o Value Object for determinístico e não depender de biblioteca externa, mantenha-o simples.
+
+Exemplo:
+```text
+Name
+Email
+Percentage
+Money
+```
+não devem ganhar camadas artificiais apenas para seguir um padrão.
+
+A regra é:
+```text
+VO sem dependência externa
+        ↓
+VO puro
+```
+Enquanto:
+```text
+VO com dependência externa
+        ↓
+Provider
+        ↓
+Parser/Adapter, quando necessário
+        ↓
+implementação em infra
+        ↓
+biblioteca externa
+```
+com a Factory sendo utilizada para realizar a composição quando houver dependência configurável.
+
+Use somente as abstrações necessárias.
+
+### 37.19 Exemplo completo: Phone
+
+Utilizar o `Phone` como principal exemplo de referência.
+
+Estrutura:
+```text
+src/modules/shared/
+├── value-object/
+│   └── phone/
+│       ├── phone.ts
+│       ├── phone-error.ts
+│       ├── phone-validation.provider.ts
+│       ├── phone-parser.ts
+│       ├── phone.factory.ts
+│       └── index.ts
+│
+└── infra/
+    └── phone/
+        └── libphonenumber-js/
+            └── libphonenumber-js.phone-parser.ts
+```
+
+A implementação concreta pode ser conceitualmente:
+```ts
+const createLibPhoneNumberParser = (): PhoneParser => {
+  return {
+    validate(input) {
+      // utiliza libphonenumber-js
+    },
+    parse(input) {
+      // utiliza libphonenumber-js
+    },
+  }
+}
+```
+
+A Factory:
+```ts
+const createPhoneFactory = () => {
+  const parser = createLibPhoneNumberParser()
+
+  return createPhone(parser)
+}
+```
+
+E o consumidor:
+```ts
+const Phone = createPhoneFactory()
+
+Phone.create("(44) 99999-9999")
+Phone.tryCreate("(44) 99999-9999")
+```
+
+O consumidor não deve conhecer:
+```text
+libphonenumber-js
+PhoneParser concreto
+implementação de infra
+```
+
+### 37.20 Fluxo arquitetural correto do Phone
+
+O fluxo de composição deve ser entendido como:
+
+```text
+                COMPOSIÇÃO
+                     │
+                     ▼
+          createPhoneFactory()
+                     │
+                     ▼
+      createLibPhoneNumberParser()
+                     │
+                     ▼
+              PhoneParser
+                     │
+             satisfaz o contrato
+                     ▼
+       PhoneValidationProvider
+                     │
+             configurado em
+                     ▼
+                   Phone
+```
+
+Depois da composição:
+```text
+                RUNTIME
+                   │
+                   ▼
+             Phone.create()
+                   │
+                   ▼
+      PhoneValidationProvider
+                   │
+                   ▼
+               PhoneParser
+                   │
+                   ▼
+          libphonenumber-js
+```
+
+A Factory não participa novamente do fluxo de runtime.
+
+Ela já realizou a composição.
+
+### 37.21 Exemplo de troca da biblioteca
+
+Se o projeto trocar `libphonenumber-js` por outra biblioteca:
+
+Não modificar:
+```text
+phone.ts
+phone-validation.provider.ts
+```
+
+Criar/substituir somente a implementação concreta:
+```text
+infra/phone/outra-biblioteca/
+└── outra-biblioteca.phone-parser.ts
+```
+
+e atualizar a composição:
+```text
+phone.factory.ts
+```
+
+O domínio permanece desacoplado.
+
+### 37.22 Regra de imports
+
+Permitido:
+```text
+Value Object → Provider
+Factory → implementação concreta
+infra → biblioteca externa
+```
+
+Não permitido:
+```text
+Value Object → biblioteca externa
+Provider → biblioteca externa
+Domain → infra
+```
+
+O domínio não deve conhecer detalhes de infraestrutura.
+
+### 37.23 Value Objects compartilhados
+
+Value Objects realmente reutilizáveis entre contextos devem permanecer em:
+```text
+src/modules/shared/value-object/
+```
+
+Exemplo:
+```text
+src/modules/shared/value-object/name/
+src/modules/shared/value-object/phone/
+```
+
+A dependência externa continua seguindo a separação:
+```text
+shared/value-object
+        ↓
+shared/infra
+```
+quando a implementação for realmente compartilhada.
+
+### 37.24 Result preservado
+
+Preservar integralmente o padrão de `Result` já existente no projeto.
+
+Não criar outra implementação de `Result`.
+
+Utilizar:
+```ts
+result.ok
+result.fail
+result.try
+result.tryAsync
+result.combine
+```
+conforme as regras existentes.
+
+Erros previsíveis de validação devem continuar sendo representados por `Result`.
+
+Exceções devem continuar reservadas para situações excepcionais ou violações de pré-condições.
+
+A presença de uma biblioteca externa não deve alterar esse princípio.
+
+### 37.25 Validações independentes preservadas
+
+Quando as validações puderem ser realizadas independentemente, continuar utilizando `result.combine` para acumular os erros.
+
+Quando uma validação depender do resultado de outra operação, utilizar composição sequencial/flatMap conforme o padrão existente.
+
+Não transformar o Provider em responsável por acumular regras de domínio.
+
+### 37.26 Normalização preservada
+
+Preservar as regras existentes de normalização.
+
+Não normalizar silenciosamente valores apenas para facilitar o uso da biblioteca.
+
+A normalização somente deve ocorrer quando for semanticamente apropriada para o Value Object.
+
+Essa decisão continua pertencendo ao domínio, mesmo que a biblioteca externa seja utilizada para auxiliar tecnicamente na conversão.
+
+### 37.27 Checklist obrigatório
+
+Sempre que criar ou modificar um Value Object com dependência externa, verificar:
+
+**Value Object**
+- [ ] é um objeto literal funcional;
+- [ ] não é uma classe sem necessidade técnica;
+- [ ] possui `create`;
+- [ ] possui `tryCreate`;
+- [ ] `create` garante as invariantes;
+- [ ] `tryCreate` aceita `unknown` na borda;
+- [ ] utiliza o `Result` existente;
+- [ ] é imutável;
+- [ ] não possui dependência direta de biblioteca externa.
+
+**Dependência externa**
+- [ ] foi verificado se a biblioteca externa é realmente necessária;
+- [ ] existe Provider somente quando necessário;
+- [ ] Provider representa uma capacidade;
+- [ ] Provider não conhece a biblioteca concreta;
+- [ ] Parser/Adapter existe quando houver necessidade real;
+- [ ] Parser utiliza `.parser.ts` quando aplicável;
+- [ ] Parser satisfaz o Provider por composição/tipagem estrutural;
+- [ ] não existe herança desnecessária.
+
+**Infraestrutura**
+- [ ] biblioteca externa está isolada em `infra`;
+- [ ] implementação concreta é a única responsável por importar a biblioteca;
+- [ ] tipos externos não vazam para o domínio;
+- [ ] APIs da biblioteca não vazam para o domínio;
+- [ ] a biblioteca pode ser substituída.
+
+**Factory**
+- [ ] Factory é responsável pela composição;
+- [ ] Factory cria/configura a implementação concreta;
+- [ ] Factory conecta Parser → Provider → VO;
+- [ ] Factory não contém regras de domínio;
+- [ ] Factory não é executada a cada `create`/`tryCreate`;
+- [ ] consumidor não precisa passar Provider manualmente em cada chamada.
+
+**Testes**
+- [ ] VO pode ser testado com Fake Provider;
+- [ ] regras de domínio são testadas independentemente;
+- [ ] Parser/Adapter possui testes próprios;
+- [ ] integração é testada quando necessário.
+
+**Arquitetura**
+- [ ] não foram criadas abstrações desnecessárias;
+- [ ] não existe dependência do domínio para `infra`;
+- [ ] não existe import direto da biblioteca pelo VO;
+- [ ] nomenclatura segue os padrões existentes;
+- [ ] `infra` é utilizado em vez de `infrastructure`;
+- [ ] Value Objects compartilhados permanecem em `shared/value-object`;
+- [ ] exports continuam explícitos;
+- [ ] programação funcional continua sendo o padrão.
+
+### 37.28 Referência atual: Phone
+
+O `Phone` em `src/modules/shared/value-object/phone/` é a implementação de referência atual para Value Objects com dependência externa.
+
+Estrutura atual:
+```text
+src/modules/shared/value-object/phone/
+├── phone.ts                    # Value Object (createPhone factory + type)
+├── phone-error.ts              # Erros de domínio
+├── phone-parser.ts             # Contrato Provider/Parser
+├── libphonenumber-js.phone-parser.ts  # Implementação concreta (infra local)
+├── index.ts                    # Factory/composição
+└── phone.test.ts               # Testes (inclui fake parser para demonstrar desacoplamento)
+```
+
+Nota: A implementação concreta atualmente reside junto ao Value Object (`libphonenumber-js.phone-parser.ts`) pois o projeto ainda não possui um diretório `shared/infra/`. Quando o diretório `infra` for criado, mover a implementação para `src/modules/shared/infra/phone/libphonenumber-js/` mantendo a mesma arquitetura. O `index.ts` continua sendo o composition root local que compõe o `Phone` pré-configurado exportado publicamente.
