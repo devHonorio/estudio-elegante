@@ -1609,3 +1609,1085 @@ src/modules/users/usecase/
 
 Criar `index.ts` apenas quando o diretório representar uma fronteira pública real.
 <!-- END:coding-rules -->
+
+<!-- BEGIN: ddd-and-interface-segregation -->
+
+# DDD, Ubiquitous Language e Interface Segregation
+
+Este contexto define regras adicionais de arquitetura de domínio, modelagem de identidade e aplicação do princípio **Interface Segregation Principle (ISP)**.
+
+Agentes de IA devem seguir estas regras ao criar ou modificar código.
+
+---
+
+## 34. Domain-Driven Design
+
+O projeto utiliza **Domain-Driven Design (DDD)** como princípio de organização do domínio.
+
+O código deve refletir o negócio e sua linguagem, e não apenas estruturas técnicas.
+
+A prioridade arquitetural deve ser:
+
+```text
+Bounded Context
+    ↓
+Ubiquitous Language
+    ↓
+Responsabilidade de negócio
+    ↓
+Abstração necessária
+    ↓
+Implementação
+```
+
+Não criar entidades, interfaces, services ou módulos apenas porque são padrões comuns de projetos CRUD.
+
+Cada abstração deve existir porque representa uma responsabilidade real do domínio ou uma necessidade arquitetural concreta.
+
+---
+
+## 35. Bounded Contexts
+
+Cada contexto de negócio deve possuir seus próprios conceitos e modelos.
+
+Não assumir que um conceito com o mesmo nome possui o mesmo significado em todos os contextos.
+
+Por exemplo:
+
+```text
+Auth
+    Identity
+
+Customer
+    Customer
+
+Business
+    Business
+    BusinessMembership
+
+Platform
+    PlatformUser
+```
+
+Esses conceitos podem representar aspectos diferentes da mesma pessoa ou organização no mundo real, mas não devem ser transformados automaticamente em uma única entidade compartilhada.
+
+Evitar:
+
+```text
+src/modules/user/
+```
+
+como entidade universal para representar:
+
+```text
+Authentication User
+Customer
+Employee
+Business Owner
+Business
+Platform Admin
+```
+
+quando esses conceitos possuem comportamentos e responsabilidades diferentes.
+
+---
+
+## 36. Regra para o conceito de User
+
+O termo `User` não deve ser utilizado como entidade universal do domínio quando existir ambiguidade semântica.
+
+A camada de apresentação pode utilizar "User", "Usuário" ou outros termos adequados à interface.
+
+Entretanto, o domínio deve utilizar o termo correspondente à **Ubiquitous Language** de cada contexto.
+
+Preferir:
+
+```text
+Identity
+Customer
+Staff
+Business
+BusinessMembership
+PlatformUser
+```
+
+em vez de:
+
+```text
+User
+```
+
+com múltiplos tipos ou roles representando conceitos diferentes.
+
+Evitar entidades como:
+
+```ts
+type User = {
+  role:
+    | "CUSTOMER"
+    | "EMPLOYEE"
+    | "BUSINESS"
+    | "PLATFORM_ADMIN"
+}
+```
+
+quando esses valores representam conceitos de domínio diferentes.
+
+Não criar uma entidade universal apenas para reduzir o número de tabelas ou arquivos.
+
+---
+
+## 37. Identity
+
+O contexto de autenticação deve representar a identidade autenticável.
+
+Preferir o conceito:
+
+```text
+Identity
+```
+
+em vez de utilizar `User` como entidade de autenticação.
+
+`Identity` responde:
+
+```text
+"Quem consegue se autenticar?"
+```
+
+A identidade pode conter informações relacionadas à autenticação, como:
+
+```text
+Identity
+├── id
+├── phone
+├── status
+└── authentication methods
+```
+
+Ela não deve possuir regras específicas de Customer, Staff, Business ou Platform apenas porque a mesma pessoa pode exercer esses papéis.
+
+Exemplo conceitual:
+
+```ts
+type Identity = {
+  readonly id: IdentityId
+  readonly phone: Phone
+  readonly status: IdentityStatus
+}
+```
+
+---
+
+## 38. IdentityId
+
+Quando diferentes contextos precisarem referenciar uma identidade autenticável, utilizar um identificador estável como:
+
+```text
+IdentityId
+```
+
+ou conceito equivalente já existente no projeto.
+
+Outros contextos devem referenciar a identidade por seu identificador em vez de compartilhar a entidade `Identity` inteira.
+
+Preferir:
+
+```ts
+type Customer = {
+  readonly id: CustomerId
+  readonly identityId?: IdentityId
+}
+```
+
+em vez de:
+
+```ts
+type Customer = {
+  readonly identity: Identity
+}
+```
+
+quando a entidade `Identity` pertencer a outro Bounded Context.
+
+Não compartilhar entidades de domínio completas entre Bounded Contexts apenas para reutilizar tipos.
+
+Compartilhar somente contratos ou identificadores quando isso for suficiente.
+
+---
+
+## 39. Business
+
+Uma empresa, estabelecimento ou organização deve ser representada como um conceito próprio do domínio.
+
+Preferir:
+
+```text
+Business
+```
+
+ou outro termo definido pela Ubiquitous Language do projeto.
+
+Não representar a empresa como:
+
+```text
+User
+```
+
+ou:
+
+```text
+User.type = "BUSINESS"
+```
+
+A empresa representa a organização/tenant.
+
+A pessoa que possui ou administra a empresa é outra entidade ou relação de domínio.
+
+Exemplo:
+
+```text
+Identity
+    ↓
+BusinessMembership
+    ↓
+Business
+```
+
+---
+
+## 40. BusinessMembership
+
+Quando uma identidade possuir uma relação com uma empresa, preferir modelar essa relação explicitamente através de uma `BusinessMembership` quando houver regras ou atributos próprios dessa relação.
+
+Exemplo:
+
+```ts
+type BusinessMembership = {
+  readonly id: BusinessMembershipId
+  readonly identityId: IdentityId
+  readonly businessId: BusinessId
+  readonly role: BusinessRole
+  readonly status: MembershipStatus
+}
+```
+
+A `BusinessMembership` responde:
+
+```text
+"Qual é a relação desta identidade com esta empresa?"
+```
+
+A `Business` responde:
+
+```text
+"Qual é a empresa?"
+```
+
+A `Identity` responde:
+
+```text
+"Quem é a identidade autenticável?"
+```
+
+Esses conceitos não devem ser combinados em uma única entidade apenas por conveniência.
+
+---
+
+## 41. Business Roles
+
+Roles pertencentes à relação entre uma identidade e uma empresa devem preferencialmente estar associadas à `BusinessMembership`.
+
+Exemplo:
+
+```text
+Identity
+    │
+    ├── Membership → Business A → OWNER
+    │
+    └── Membership → Business B → STAFF
+```
+
+Não colocar `businessId` ou `businessRole` diretamente na `Identity` quando uma identidade puder participar de múltiplas empresas.
+
+Evitar:
+
+```ts
+type Identity = {
+  readonly businessId: BusinessId
+  readonly role: BusinessRole
+}
+```
+
+quando a identidade puder possuir múltiplas memberships.
+
+Preferir:
+
+```ts
+type BusinessMembership = {
+  readonly identityId: IdentityId
+  readonly businessId: BusinessId
+  readonly role: BusinessRole
+}
+```
+
+---
+
+## 42. Customer
+
+`Customer` representa o cliente dentro do contexto de negócio.
+
+`Customer` não é sinônimo de `Identity`.
+
+Uma pessoa pode possuir uma `Identity` e também possuir uma representação como `Customer`.
+
+Exemplo:
+
+```text
+Identity
+    ↓
+Customer
+    ↓
+Business
+```
+
+Quando o cliente não precisar de autenticação, `identityId` pode ser inexistente quando o domínio permitir.
+
+Quando precisar de autenticação, o `Customer` pode referenciar a `Identity` por `IdentityId`.
+
+O contexto `Customer` deve possuir suas próprias regras, entidades e casos de uso.
+
+---
+
+## 43. Staff
+
+`Staff`, `StaffMember`, `Professional` ou outro termo equivalente deve ser utilizado quando existir um conceito real de funcionário/profissional no domínio.
+
+Não criar um módulo `staff` apenas porque existe um usuário com role de funcionário.
+
+Quando a única informação necessária for a relação de uma identidade com uma empresa, utilizar `BusinessMembership`.
+
+Exemplo:
+
+```text
+Identity
+    ↓
+BusinessMembership
+    ↓
+Business
+```
+
+com:
+
+```text
+role = STAFF
+```
+
+Criar uma entidade específica como `Staff` ou `StaffProfile` somente quando existirem informações ou regras próprias desse conceito.
+
+Exemplos:
+
+```text
+specialties
+commission
+working hours
+services performed
+professional schedule
+```
+
+Nesse caso:
+
+```text
+Identity
+    ↓
+BusinessMembership
+    ↓
+Staff
+    ↓
+Business
+```
+
+---
+
+## 44. PlatformUser
+
+O administrador ou operador da própria plataforma deve pertencer ao contexto da plataforma.
+
+Não tratá-lo como:
+
+```text
+Business
+```
+
+e não utilizar `BusinessMembership` para representar permissões administrativas globais da plataforma.
+
+Preferir:
+
+```text
+Platform
+    PlatformUser
+```
+
+O `PlatformUser` pode referenciar:
+
+```ts
+identityId: IdentityId
+```
+
+quando utilizar a mesma identidade de autenticação.
+
+Conceitualmente:
+
+```text
+Identity
+    ↓
+PlatformUser
+```
+
+O contexto Platform pode possuir suas próprias roles e regras de autorização.
+
+---
+
+## 45. Uma identidade pode possuir múltiplos papéis
+
+Não assumir que uma pessoa possui apenas uma função global.
+
+Uma mesma `Identity` pode representar diferentes conceitos em diferentes contextos.
+
+Exemplo:
+
+```text
+Identity
+    │
+    ├── Customer
+    │
+    ├── BusinessMembership → Business A / OWNER
+    │
+    ├── BusinessMembership → Business B / STAFF
+    │
+    └── PlatformUser
+```
+
+Isso não significa que deve existir uma única entidade `User` contendo todos esses dados.
+
+Significa que uma mesma identidade pode possuir diferentes representações contextuais.
+
+---
+
+## 46. Comunicação entre Bounded Contexts
+
+Evitar compartilhar entidades de domínio completas entre contextos.
+
+Preferir:
+
+```text
+IdentityId
+BusinessId
+CustomerId
+MembershipId
+```
+
+e contratos explícitos.
+
+Quando necessário, utilizar eventos de domínio ou contratos de aplicação.
+
+Exemplos:
+
+```text
+IdentityRegistered
+BusinessCreated
+BusinessMembershipCreated
+CustomerCreated
+```
+
+Um contexto não deve acessar diretamente os detalhes internos da entidade de outro contexto apenas porque estão no mesmo monorepo ou aplicação.
+
+---
+
+# Interface Segregation Principle
+
+## 47. Princípio de segregação de interfaces
+
+O projeto deve seguir o **Interface Segregation Principle (ISP)**:
+
+> Nenhum consumidor deve ser obrigado a depender de métodos que não utiliza.
+
+Não criar uma interface de repository universal contendo todas as operações CRUD quando uma implementação utiliza somente parte delas.
+
+Evitar:
+
+```ts
+interface Repository<T> {
+  create(input: unknown): Promise<unknown>
+  findById(id: string): Promise<unknown>
+  findMany(): Promise<unknown[]>
+  update(input: unknown): Promise<unknown>
+  delete(id: string): Promise<void>
+}
+```
+
+quando determinado repository precisar somente de:
+
+```text
+findById
+```
+
+Nesse caso, ele não deve ser obrigado a implementar:
+
+```text
+create
+findMany
+update
+delete
+```
+
+---
+
+## 48. Interfaces por responsabilidade
+
+As operações de persistência devem ser segregadas por responsabilidade.
+
+Para operações CRUD, utilizar interfaces pequenas e composáveis.
+
+Conceitualmente:
+
+```text
+Create
+Read
+Update
+Delete
+```
+
+Cada capacidade deve possuir sua própria interface.
+
+Exemplo:
+
+```ts
+interface CreateRepository<
+  TInput,
+  TOutput,
+> {
+  create(input: TInput): Promise<Result<TOutput, unknown>>
+}
+```
+
+```ts
+interface ReadRepository<
+  TQuery,
+  TOutput,
+> {
+  read(query: TQuery): Promise<Result<TOutput, unknown>>
+}
+```
+
+```ts
+interface UpdateRepository<
+  TInput,
+  TOutput,
+> {
+  update(input: TInput): Promise<Result<TOutput, unknown>>
+}
+```
+
+```ts
+interface DeleteRepository<
+  TInput,
+  TOutput,
+> {
+  delete(input: TInput): Promise<Result<TOutput, unknown>>
+}
+```
+
+Os tipos devem ser genéricos para permitir reutilização sem perder tipagem.
+
+---
+
+## 49. Read deve ser segregado quando necessário
+
+`Read` pode possuir mais de uma capacidade quando as necessidades do domínio forem diferentes.
+
+Não assumir que todo repository precisa de uma única operação genérica de leitura.
+
+Quando necessário, separar:
+
+```text
+FindById
+FindMany
+Exists
+Count
+```
+
+Por exemplo:
+
+```ts
+interface FindByIdRepository<
+  TId,
+  TOutput,
+> {
+  findById(
+    id: TId,
+  ): Promise<Result<TOutput | null, unknown>>
+}
+```
+
+```ts
+interface FindManyRepository<
+  TQuery,
+  TOutput,
+> {
+  findMany(
+    query: TQuery,
+  ): Promise<Result<readonly TOutput[], unknown>>
+}
+```
+
+```ts
+interface ExistsRepository<TQuery> {
+  exists(
+    query: TQuery,
+  ): Promise<Result<boolean, unknown>>
+}
+```
+
+Um repository deve implementar somente as capacidades que realmente utiliza.
+
+---
+
+## 50. Composição de interfaces
+
+Interfaces pequenas podem ser compostas quando uma implementação realmente precisar de múltiplas capacidades.
+
+Exemplo:
+
+```ts
+type UserRepository =
+  & CreateRepository<CreateUserInput, User>
+  & FindByIdRepository<UserId, User>
+  & UpdateRepository<UpdateUserInput, User>
+  & DeleteRepository<UserId, void>
+```
+
+Isso permite que diferentes repositories possuam diferentes capacidades.
+
+Exemplo:
+
+```text
+UserReadRepository
+    └── FindById
+
+UserCreationRepository
+    └── Create
+
+UserRepository
+    ├── Create
+    ├── FindById
+    ├── Update
+    └── Delete
+```
+
+Não obrigar todo repository a possuir todas essas operações.
+
+---
+
+## 51. Interfaces devem representar capacidades
+
+A interface não deve existir apenas porque "todo repository precisa ter uma interface".
+
+Ela deve representar uma capacidade concreta que será consumida.
+
+Preferir:
+
+```ts
+FindByIdRepository<UserId, User>
+```
+
+quando um caso de uso somente precisa buscar um usuário.
+
+Evitar:
+
+```ts
+UserRepository
+```
+
+contendo operações que aquele caso de uso não utiliza.
+
+Isso reduz acoplamento e facilita testes.
+
+---
+
+## 52. Input e Output genéricos
+
+As interfaces CRUD devem permitir tipos de entrada e saída independentes.
+
+Não assumir que:
+
+```text
+CreateInput === Entity
+```
+
+nem que:
+
+```text
+UpdateInput === Entity
+```
+
+Por exemplo:
+
+```ts
+CreateRepository<CreateUserInput, User>
+```
+
+e:
+
+```ts
+UpdateRepository<UpdateUserInput, User>
+```
+
+Os tipos devem representar a operação real.
+
+Isso permite que:
+
+```text
+Input
+    ↓
+Repository
+    ↓
+Output
+```
+
+possua contratos diferentes sem perder reutilização.
+
+---
+
+## 53. Repository não deve conhecer detalhes desnecessários
+
+Uma interface de repository deve expor somente a capacidade necessária ao consumidor.
+
+Evitar interfaces com métodos genéricos demais, como:
+
+```ts
+execute(...)
+query(...)
+handle(...)
+```
+
+quando uma operação específica puder expressar melhor a intenção.
+
+Preferir:
+
+```ts
+findById(...)
+create(...)
+update(...)
+delete(...)
+```
+
+ou nomes ainda mais específicos quando o domínio exigir.
+
+A interface deve contribuir para a Ubiquitous Language.
+
+---
+
+## 54. Generics não devem destruir a semântica
+
+Generics devem ser utilizados para reutilização estrutural, não para transformar o domínio em uma abstração genérica sem significado.
+
+Preferir:
+
+```ts
+CreateRepository<CreateCustomerInput, Customer>
+```
+
+porque a interface representa claramente a capacidade de criação.
+
+Evitar criar algo excessivamente genérico como:
+
+```ts
+Repository<
+  T,
+  A,
+  B,
+  C,
+  D,
+  E,
+  F
+>
+```
+
+apenas para tentar representar todos os repositories possíveis.
+
+A abstração deve permanecer pequena e compreensível.
+
+---
+
+## 55. Erros dos repositories
+
+Repositories devem seguir as regras de `Result` definidas neste projeto.
+
+Quando uma operação possuir falhas previsíveis:
+
+```ts
+Promise<Result<T, E>>
+```
+
+deve ser preferido.
+
+Exemplo:
+
+```ts
+interface FindByIdRepository<TId, TOutput> {
+  findById(
+    id: TId,
+  ): Promise<Result<TOutput | null, RepositoryError>>
+}
+```
+
+O erro concreto deve ser especializado quando necessário.
+
+Não utilizar `unknown` como solução definitiva quando o domínio ou a infraestrutura já possuir um erro conhecido.
+
+`unknown` pode ser utilizado temporariamente na definição de uma abstração genérica, mas implementações concretas devem preservar a tipagem real sempre que possível.
+
+---
+
+## 56. Repository de domínio versus implementação
+
+A interface utilizada pelo domínio/aplicação não deve depender da implementação concreta de persistência.
+
+Preferir:
+
+```text
+Use Case
+    ↓
+Repository Interface
+    ↓
+Infrastructure Implementation
+    ↓
+Database
+```
+
+Exemplo:
+
+```text
+src/modules/customer/
+├── repository/
+│   ├── find-customer-by-id.repository.ts
+│   ├── create-customer.repository.ts
+│   └── update-customer.repository.ts
+│
+└── infra/
+    └── ...
+```
+
+A implementação concreta pode compor múltiplas interfaces:
+
+```ts
+type CustomerRepository =
+  & CreateRepository<CreateCustomerInput, Customer>
+  & FindByIdRepository<CustomerId, Customer>
+  & UpdateRepository<UpdateCustomerInput, Customer>
+```
+
+---
+
+## 57. Interfaces por caso de uso
+
+Quando possível, o caso de uso deve depender somente da capacidade necessária.
+
+Exemplo:
+
+```ts
+type GetCustomerDependencies = {
+  readonly customerReader: FindByIdRepository<CustomerId, Customer>
+}
+```
+
+e não:
+
+```ts
+type GetCustomerDependencies = {
+  readonly customerRepository: CustomerRepository
+}
+```
+
+quando `CustomerRepository` possuir outras operações desnecessárias.
+
+Isso aplica o ISP diretamente à camada de aplicação.
+
+---
+
+## 58. Não criar CRUD completo automaticamente
+
+Ao criar uma nova entidade, não gerar automaticamente:
+
+```text
+create
+list
+find
+update
+delete
+```
+
+apenas porque a entidade possui persistência.
+
+Primeiro identificar quais operações realmente fazem parte do domínio.
+
+Se somente criação e consulta forem necessárias:
+
+```text
+CreateRepository
+FindByIdRepository
+```
+
+são suficientes.
+
+Se posteriormente surgir necessidade de atualização, adicionar:
+
+```text
+UpdateRepository
+```
+
+sem alterar os consumidores que não precisam dessa capacidade.
+
+---
+
+## 59. Interfaces compartilhadas
+
+Interfaces CRUD genéricas podem ser compartilhadas somente quando realmente possuírem o mesmo significado arquitetural.
+
+Uma interface estrutural como:
+
+```text
+CreateRepository<TInput, TOutput>
+```
+
+pode residir em `shared` se for genuinamente reutilizada por múltiplos contextos e não possuir regras específicas de um domínio.
+
+Entretanto, interfaces específicas de domínio devem permanecer dentro do contexto.
+
+Exemplo:
+
+```text
+src/modules/shared/
+└── repository/
+    ├── create-repository.ts
+    ├── find-by-id-repository.ts
+    ├── find-many-repository.ts
+    ├── update-repository.ts
+    └── delete-repository.ts
+```
+
+Somente criar esse diretório quando essas abstrações forem realmente compartilhadas por múltiplos contextos.
+
+Não mover interfaces para `shared` apenas para "organizar".
+
+---
+
+## 60. Regra para novos repositories
+
+Antes de criar um repository, responder:
+
+```text
+1. Qual contexto de negócio possui essa responsabilidade?
+
+2. Qual caso de uso precisa dessa capacidade?
+
+3. Quais operações realmente são necessárias?
+
+4. O consumidor precisa de CRUD completo?
+
+5. Posso depender de uma interface menor?
+
+6. Qual é o tipo de entrada?
+
+7. Qual é o tipo de saída?
+
+8. Qual é o tipo de erro?
+
+9. A interface é específica do domínio ou realmente compartilhada?
+
+10. Estou criando uma abstração porque ela é necessária ou apenas porque é um padrão conhecido?
+```
+
+---
+
+## 61. Regra geral de ISP
+
+A regra geral é:
+
+```text
+Não obrigar consumidores a depender
+de capacidades que eles não utilizam.
+```
+
+Portanto:
+
+```text
+Pequenas interfaces
+        ↓
+Composição
+        ↓
+Dependências mínimas
+        ↓
+Baixo acoplamento
+        ↓
+Maior testabilidade
+```
+
+O projeto deve preferir **interfaces pequenas e composáveis** a interfaces grandes e monolíticas.
+
+---
+
+## 62. Princípio arquitetural final
+
+A arquitetura deve preservar simultaneamente:
+
+```text
+DDD
++
+Bounded Contexts
++
+Ubiquitous Language
++
+Programação Funcional
++
+Imutabilidade
++
+Result
++
+Baixo Acoplamento
++
+Interface Segregation
++
+Tipagem Forte
+```
+
+A modelagem deve responder primeiro:
+
+```text
+"O que esse conceito significa no negócio?"
+```
+
+e somente depois:
+
+```text
+"Qual classe, interface ou arquivo devo criar?"
+```
+
+Da mesma forma, antes de criar um repository:
+
+```text
+"Qual capacidade este consumidor realmente precisa?"
+```
+
+e não:
+
+```text
+"Quais métodos todo CRUD deveria possuir?"
+```
+
+A regra fundamental é:
+
+> **Modelar o domínio por significado e modelar as dependências pela capacidade necessária.**
+
+<!-- END: ddd-and-interface-segregation -->
