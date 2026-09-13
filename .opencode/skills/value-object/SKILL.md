@@ -2644,13 +2644,258 @@ O `Phone` em `src/modules/shared/value-object/phone/` é a implementação de re
 
 Estrutura atual:
 ```text
-src/modules/shared/value-object/phone/
-├── phone.ts                    # Value Object (createPhone factory + type)
-├── phone-error.ts              # Erros de domínio
-├── phone-parser.ts             # Contrato Provider/Parser
-├── libphonenumber-js.phone-parser.ts  # Implementação concreta (infra local)
-├── index.ts                    # Factory/composição
-└── phone.test.ts               # Testes (inclui fake parser para demonstrar desacoplamento)
+src/modules/shared/
+├── value-object/
+│   └── phone/
+│       ├── phone.ts                          # VO: createPhone(factory) + tipo Phone
+│       ├── phone-error.ts                    # PhoneError
+│       ├── phone-parser.ts                   # Provider/Parser contract (ParsedPhone, PhoneParser)
+│       ├── phone-validation.provider.ts      # alias Provider para semântica de domínio
+│       ├── phone.factory.ts                  # createPhoneFactory() — composição
+│       ├── index.ts                          # export const Phone = createPhoneFactory() + re-exports
+│       └── phone.test.ts                     # testes com fake parser + integração libphonenumber-js
+│
+└── infra/
+    └── phone/
+        └── libphonenumber-js/
+            └── libphonenumber-js.phone-parser.ts  # única importação de "libphonenumber-js"
 ```
 
-Nota: A implementação concreta atualmente reside junto ao Value Object (`libphonenumber-js.phone-parser.ts`) pois o projeto ainda não possui um diretório `shared/infra/`. Quando o diretório `infra` for criado, mover a implementação para `src/modules/shared/infra/phone/libphonenumber-js/` mantendo a mesma arquitetura. O `index.ts` continua sendo o composition root local que compõe o `Phone` pré-configurado exportado publicamente.
+O `Phone` demonstra o fluxo completo: `Factory → libphonenumber-js.phone-parser (infra) → PhoneParser/Provider → phone.ts (domínio) → index.ts (Phone pré-configurado)`.
+
+---
+
+## 38. Exemplo consolidado: Name (VO puro — sem infra)
+
+`Name` é o exemplo de VO determinístico, sem dependência externa. Validação 100% pura via regex Unicode e `result.combine`.
+
+### 38.1 Estrutura
+
+```text
+src/modules/shared/value-object/name/
+├── index.ts       # barrel: export { Name } + export type { NameError }
+├── name.ts        # VO + validações puras
+└── name.test.ts   # 70 testes: válidos/inválidos, Unicode, acúmulo, firstName
+```
+
+### 38.2 `name.ts` — implementação completa
+
+```ts
+import { result, type Result } from "@/src/modules/shared/result"
+
+type Name = {
+  readonly value: string
+  readonly firstName: string
+}
+
+type NameErrorCode =
+  | "NAME_INVALID_TYPE"
+  | "NAME_REQUIRED"
+  | "NAME_INVALID_FORMAT"
+  | "NAME_INVALID_SPACING"
+  | "NAME_INVALID_WORD_COUNT"
+  | "NAME_INVALID_CAPITALIZATION"
+  | "NAME_ABBREVIATION_NOT_ALLOWED"
+
+type NameError = {
+  readonly code: NameErrorCode
+  readonly message: string
+}
+
+const NAME_PARTICLES: readonly string[] = ["de","da","do","das","dos","e"]
+
+const isLetter = (char: string) => /\p{L}/u.test(char)
+const hasInvalidFormat = (value: string) => [...value].some(c => !isLetter(c) && c !== " ")
+const hasInvalidSpacing = (value: string) => value !== value.trim() || /\s{2,}/.test(value)
+const isParticle = (word: string) => NAME_PARTICLES.includes(word)
+const isAbbreviation = (word: string) => word.length === 1 && !isParticle(word)
+const hasInvalidCapitalization = (word: string) => word.length>0 && !isParticle(word) && !/\p{Lu}/u.test(word[0])
+const isFullName = (value: string) => value.split(" ").length >= 2
+
+const validateRequired = (input: string): Result<string, NameError> =>
+  input.trim().length===0 ? result.fail({code:"NAME_REQUIRED",message:"O nome é obrigatório."}) : result.ok(input)
+const validateSpacing = (input: string): Result<string, NameError> =>
+  hasInvalidSpacing(input) ? result.fail({code:"NAME_INVALID_SPACING",message:"O nome não pode possuir espaços consecutivos, iniciais ou finais."}) : result.ok(input)
+const validateFormat = (input: string): Result<string, NameError> =>
+  hasInvalidFormat(input) ? result.fail({code:"NAME_INVALID_FORMAT",message:"O nome deve conter somente letras e um único espaço entre palavras."}) : result.ok(input)
+const validateWordCount = (input: string): Result<string, NameError> =>
+  !isFullName(input) ? result.fail({code:"NAME_INVALID_WORD_COUNT",message:"O nome completo deve conter nome e sobrenome."}) : result.ok(input)
+const validateAbbreviation = (input: string): Result<string, NameError> =>
+  input.split(" ").some(isAbbreviation) ? result.fail({code:"NAME_ABBREVIATION_NOT_ALLOWED",message:"Abreviaturas não são permitidas."}) : result.ok(input)
+const validateCapitalization = (input: string): Result<string, NameError> =>
+  input.split(" ").some(hasInvalidCapitalization) ? result.fail({code:"NAME_INVALID_CAPITALIZATION",message:"Cada palavra deve iniciar com letra maiúscula, exceto partículas permitidas."}) : result.ok(input)
+
+const tryCreate = (input: unknown): Result<Name, NameError[]> => {
+  if (typeof input !== "string") return result.fail([{code:"NAME_INVALID_TYPE",message:"O nome deve ser uma string."}])
+  const validation = result.combine(
+    validateRequired(input), validateSpacing(input), validateFormat(input),
+    validateWordCount(input), validateAbbreviation(input), validateCapitalization(input),
+  )
+  if (validation.fail) return validation
+  return result.ok({ value: input, firstName: input.split(" ")[0] })
+}
+
+const create = (value: string): Name => {
+  const r = tryCreate(value)
+  if (r.fail) throw new Error(`Pré-condição do Name violada: ${r.error.map(e=>e.code).join(", ")}.`)
+  return r.value
+}
+
+const Name = { create, tryCreate }
+export { Name }
+export type { NameError }
+```
+
+### 38.3 `index.ts` — barrel
+
+```ts
+export { Name } from "./name"
+export type { NameError } from "./name"
+```
+
+### 38.4 Uso
+
+```ts
+import { Name } from "@/src/modules/shared/value-object/name"
+
+Name.tryCreate("João Silva")        // Result<Name, NameError[]>
+Name.tryCreate("joão")              // fail: [NAME_INVALID_WORD_COUNT, NAME_INVALID_CAPITALIZATION]
+Name.create("Maria da Silva").firstName // "Maria"
+Name.create("João")                 // throw
+```
+
+### 38.5 Testes — o que cobrir
+
+- válidos: `José Honorio`, `Maria da Silva`, `Ângela Maria` (Unicode)
+- inválidos com código: `""`→REQUIRED+WORD_COUNT, `" João"`→SPACING, `"João silva"`→CAPITALIZATION, `"J. Silva"`→FORMAT, `"J Silva"`→ABBREVIATION
+- acúmulo: `" joão  silva2"`→[SPACING, FORMAT, CAPITALIZATION]
+- `create` throw, `firstName` derivado, imutabilidade `readonly`
+
+## 39. Exemplo consolidado: Phone (VO com dependência externa)
+
+`Phone` é o exemplo de VO que precisa de biblioteca externa (`libphonenumber-js`). Demonstra Provider → Parser → Factory → infra.
+
+### 39.1 Estrutura
+
+```text
+src/modules/shared/value-object/phone/
+├── phone.ts                          # factory createPhone(provider) + tipo Phone
+├── phone-error.ts                    # PhoneErrorCode
+├── phone-parser.ts                   # ParsedPhone, PhoneParser, PhoneParserResult
+├── phone-validation.provider.ts      # type PhoneValidationProvider = PhoneParser
+├── phone.factory.ts                  # createPhoneFactory()
+├── index.ts                          # const Phone = createPhoneFactory() + type merge
+└── phone.test.ts                     # fake parser + integração
+
+src/modules/shared/infra/phone/libphonenumber-js/
+└── libphonenumber-js.phone-parser.ts # createLibPhoneNumberParser(): PhoneParser
+```
+
+### 39.2 `phone-error.ts`
+
+```ts
+type PhoneErrorCode = "PHONE_INVALID_TYPE" | "PHONE_REQUIRED" | "PHONE_INVALID_FORMAT" | "PHONE_INVALID_NUMBER"
+type PhoneError = { readonly code: PhoneErrorCode; readonly message: string }
+export type { PhoneError, PhoneErrorCode }
+```
+
+### 39.3 `phone-parser.ts` — contrato
+
+```ts
+type ParsedPhone = { readonly value: string; readonly formatted: string; readonly country: string|undefined; readonly ddi: string; readonly ddd:string|undefined }
+type PhoneParserResult = {readonly status:"valid"; readonly phone: ParsedPhone} | {readonly status:"unrecognized"} | {readonly status:"invalid"}
+type PhoneParser = { parse(input: string, options?: {readonly defaultCountry?: string}): PhoneParserResult }
+export type { ParsedPhone, PhoneParser, PhoneParserResult }
+```
+
+### 39.4 `phone.ts` — VO funcional (depende de abstração)
+
+```ts
+import { result, type Result } from "@/src/modules/shared/result"
+import type { PhoneParser } from "./phone-parser"
+import type { PhoneError } from "./phone-error"
+
+type Phone = { readonly value: string; readonly formatted: string; readonly country: string|undefined; readonly ddi: string; readonly ddd:string|undefined }
+
+const validateRequired = (input: string): Result<string, PhoneError> =>
+  input.trim().length===0 ? result.fail({code:"PHONE_REQUIRED",message:"O telefone é obrigatório."}) : result.ok(input)
+
+const validateParsed = (parser: PhoneParser, input: string): Result<Phone, PhoneError> => {
+  const parsed = parser.parse(input)
+  if (parsed.status==="unrecognized") return result.fail({code:"PHONE_INVALID_FORMAT",message:"O telefone não possui um formato reconhecível."})
+  if (parsed.status==="invalid") return result.fail({code:"PHONE_INVALID_NUMBER",message:"O telefone não é um número válido."})
+  return result.ok(parsed.phone)
+}
+
+const createPhone = (parser: PhoneParser) => {
+  const tryCreate = (input: unknown): Result<Phone, PhoneError[]> => {
+    if (typeof input!=="string") return result.fail([{code:"PHONE_INVALID_TYPE",message:"O telefone deve ser uma string."}])
+    const required = validateRequired(input)
+    if (required.fail) return result.fail([required.error])
+    const parsed = validateParsed(parser, input)
+    if (parsed.fail) return result.fail([parsed.error])
+    return result.ok(parsed.value)
+  }
+  const create = (value: string): Phone => {
+    const r = tryCreate(value)
+    if (r.fail) throw new Error(`Pré-condição do Phone violada: ${r.error.map(e=>e.code).join(", ")}.`)
+    return r.value
+  }
+  const isValid = (input: unknown) => typeof input==="string" && parser.parse(input).status==="valid"
+  const equals = (a: Phone, b: Phone) => a.value===b.value
+  return { create, tryCreate, isValid, equals }
+}
+export { createPhone }
+export type { Phone }
+```
+
+### 39.5 `phone.factory.ts` — composição
+
+```ts
+import { createLibPhoneNumberParser } from "@/src/modules/shared/infra/phone/libphonenumber-js/libphonenumber-js.phone-parser"
+import { createPhone } from "./phone"
+const createPhoneFactory = () => createPhone(createLibPhoneNumberParser())
+export { createPhoneFactory }
+```
+
+### 39.6 `infra` — única importação externa
+
+```ts
+// src/modules/shared/infra/phone/libphonenumber-js/libphonenumber-js.phone-parser.ts
+import { isSupportedCountry, parsePhoneNumberFromString } from "libphonenumber-js"
+import type { ParsedPhone, PhoneParser } from "@/src/modules/shared/value-object/phone/phone-parser"
+// ... buildParsedPhone, formatBrazil, extractDdi/Ddd ...
+const createLibPhoneNumberParser = (): PhoneParser => ({ parse(input, options) { /* usa libphonenumber-js e adapta para ParsedPhone */ } })
+export { createLibPhoneNumberParser }
+```
+
+### 39.7 `index.ts` — Phone pré-configurado (merge valor+tipo)
+
+```ts
+import { createIdFactory } from "./id.factory" // exemplo análogo
+import { createPhoneFactory } from "./phone.factory"
+import type { Phone as PhoneVO } from "./phone"
+export const Phone = createPhoneFactory()
+export type Phone = PhoneVO
+export { createPhone } from "./phone"
+export type { PhoneError } from "./phone-error"
+```
+
+### 39.8 Uso
+
+```ts
+import { Phone } from "@/src/modules/shared/value-object/phone"
+
+Phone.tryCreate("(44) 99869-2094")      // ok: {value:"+5544998692094", formatted:"(44) 9 9869-2094", ddi:"55", ddd:"44"}
+Phone.tryCreate("ABC")                 // fail: [PHONE_INVALID_FORMAT]
+Phone.create("+5544998692094").value   // "+5544998692094"
+Phone.isValid("+5511987654321")        // true
+Phone.equals(Phone.create(a), Phone.create(b)) // compara value
+// teste com fake: createPhone(createStubParser()).tryCreate("unrecognized") → PHONE_INVALID_FORMAT
+```
+
+### 39.9 Testes — camadas
+
+1. **VO puro (fake):** `createPhone(createStubParser())` valida mapeamento `unrecognized→PHONE_INVALID_FORMAT`, `invalid→PHONE_INVALID_NUMBER`
+2. **Parser real:** `createLibPhoneNumberParser().parse("+5544998692094")` → `{value, country:"BR", ddd:"44", formatted:"(44) 9 9869-2094"}`
+3. **Integração:** `Phone.tryCreate` normaliza `"(44) 99869-2094"` → `"+5544998692094"`, internacional `+12125551234`, PT sem DDD, `Phone.equals` com representações diferentes
