@@ -97,15 +97,23 @@ create(...)
 tryCreate(...)
 ```
 
-Essas operações possuem responsabilidades diferentes.
+Essas operações possuem responsabilidades diferentes e levam a resultados diferentes.
 
 ### `create`
 
-Utilizar quando o código já possui garantia de que o valor atende às invariantes do Value Object ou quando a violação representar uma condição excepcional.
+Exige pré-condição garantida. Garante as invariantes e retorna um Value Object válido.
+
+- Valor válido → Value Object
+- Valor inválido (pré-condição violada) → `throw`
+
+`create` NÃO é uma função que apenas empacota o valor.
 
 ### `tryCreate`
 
-Utilizar quando o valor vier de uma fonte potencialmente inválida ou quando a falha fizer parte do fluxo normal da aplicação.
+Aceita entrada potencialmente inválida (`unknown`). Retorna `Result`.
+
+- Valor válido → `result.ok(...)`
+- Valor inválido → `result.fail(...)` (podendo acumular múltiplos erros)
 
 `tryCreate` deve obrigatoriamente utilizar o `result` compartilhado do projeto.
 
@@ -126,8 +134,10 @@ result.ok(...)
 ```text
 valor inválido
     ↓
-result.fail(...)
+result.fail([... erros ...])
 ```
+
+Um Value Object NUNCA pode existir em estado inválido. Todas as vias de construção (`create` e `tryCreate`) devem garantir as invariantes antes de produzir o objeto.
 
 ## 4. API do Value Object
 
@@ -154,7 +164,9 @@ O Value Object deve ser tratado como uma composição de tipos, valores imutáve
 
 ## 5. `create`
 
-`create` representa a construção de um Value Object assumindo uma pré-condição válida.
+`create` representa a construção de um Value Object a partir de uma pré-condição garantida.
+
+`create` NÃO é uma função que apenas empacota o valor. Ele DEVE garantir as invariantes.
 
 Exemplo:
 
@@ -162,7 +174,56 @@ Exemplo:
 const name = Name.create("José Honorio")
 ```
 
-A entrada utilizada por `create` deve possuir garantia prévia de validade ou estar em um contexto onde uma violação represente uma condição excepcional.
+`Name.create(value)` deve resultar em um `Name` com todas as invariantes garantidas.
+
+Fluxo:
+
+```text
+create
+  ↓
+valor deve ser válido
+  ↓
+Name
+```
+
+ou:
+
+```text
+create
+  ↓
+valor inválido
+  ↓
+throw
+```
+
+Se o valor violar uma invariante (por exemplo `Name.create("joão")`), isso representa uma violação da pré-condição de `create` e deve resultar em uma exception (`throw`).
+
+Não utilizar `Result` como retorno normal de `create`.
+
+Não permitir que `Name.create("joão")` produza `Name` com valor inválido.
+
+É permitido e preferível reutilizar a validação do `tryCreate` dentro de `create` para evitar duplicação:
+
+```ts
+const create = (value: string): Name => {
+  const nameResult = tryCreate(value)
+
+  if (nameResult.fail) {
+    throw new Error(...)
+  }
+
+  return nameResult.value
+}
+```
+
+A mensagem da exception deve ser descritiva e apontar a violação da pré-condição.
+
+Separação conceitual:
+
+- `create` → falha excepcional por violação de pré-condição → `throw`
+- `tryCreate` → falha esperada/previsível → `Result`
+
+Não criar um segundo sistema de erro apenas para `create`.
 
 Não utilizar `create` indiscriminadamente para processar entradas externas potencialmente inválidas.
 
@@ -172,13 +233,21 @@ Quando a validade não estiver garantida, utilizar `tryCreate`.
 
 `tryCreate` é a porta de entrada segura para construir um Value Object a partir de um valor potencialmente inválido.
 
-Seu retorno deve utilizar obrigatoriamente o `Result` compartilhado:
+Sua entrada deve ser `unknown`, NÃO o tipo final do valor:
 
 ```ts
-Result<ValueObject, Error>
+tryCreate(input: unknown): Result<Name, NameError[]>
 ```
 
-ou um tipo equivalente utilizando a implementação oficial do projeto.
+Isso é importante porque Value Objects normalmente recebem dados provenientes de boundaries da aplicação.
+
+Seu retorno utiliza obrigatoriamente o `Result` compartilhado:
+
+```ts
+Result<ValueObject, Errors>
+```
+
+onde `Errors` representa a lista de erros acumulados quando existem violações independentes.
 
 Exemplo:
 
@@ -199,7 +268,7 @@ Com entrada inválida:
 ```text
 input inválido
     ↓
-result.fail(error)
+result.fail([erro1, erro2, ...])
 ```
 
 Não utilizar:
@@ -218,6 +287,108 @@ como representação normal de falha.
 ```ts
 result.ok(...)
 result.fail(...)
+result.combine(...)
+```
+
+> O `tryCreate` deve acumular erros de validações independentes em vez de retornar apenas o primeiro erro encontrado.
+
+### Erro estrutural / boundary
+
+Nem toda validação pode ser executada em qualquer entrada.
+
+Se `input` não possuir o tipo esperado (por exemplo, `typeof input !== "string"`), não é possível executar as validações específicas do Value Object que dependem do tipo.
+
+Nesse caso, a validação deve falhar imediatamente, sem executar as demais:
+
+```ts
+if (typeof input !== "string") {
+  return result.fail([
+    {
+      code: "NAME_INVALID_TYPE",
+      message: "O nome deve ser uma string.",
+    },
+  ])
+}
+```
+
+Não chamar `input.trim()`, `input.split(" ")` ou outro método antes de garantir o tipo esperado.
+
+Fluxo:
+
+```text
+unknown
+  ↓
+tipo inválido
+  ↓
+falha imediata (sem executar as demais validações)
+```
+
+> Uma validação que depende de uma pré-condição não satisfeita não deve ser executada. Nesse caso, o `tryCreate` deve retornar imediatamente o erro estrutural correspondente.
+
+### Validações independentes
+
+Depois que a entrada possuir o tipo correto, TODAS as validações independentes possíveis devem ser executadas e combinadas.
+
+Exemplo:
+
+```text
+input string
+   ↓
+├── required
+├── spacing
+├── format
+├── abbreviation
+└── capitalization
+```
+
+Não retornar o primeiro erro encontrado quando existem outros erros independentes que também poderiam ser detectados.
+
+As validações independentes devem produzir seus próprios `Result`s e serem combinadas com `result.combine`:
+
+```ts
+const validation = result.combine(
+  validateRequired(input),
+  validateSpacing(input),
+  validateFormat(input),
+  validateAbbreviation(input),
+  validateCapitalization(input),
+)
+```
+
+Se todas passarem:
+
+```text
+result.ok(...)
+```
+
+Se uma ou mais falharem:
+
+```text
+result.fail([
+  error1,
+  error2,
+  error3,
+])
+```
+
+Os erros devem ser preservados na ordem das validações de origem.
+
+### Fluxo completo do `tryCreate`
+
+```text
+unknown
+  ↓
+pré-condição estrutural (tipo)
+  ↓
+tipo inválido → result.fail([erro estrutural])
+  ↓
+tipo válido → validações independentes
+  ↓
+result.combine(...)
+  ↓
+com erros → result.fail(lista de erros)
+  ↓
+sem erros → result.ok(Value Object)
 ```
 
 ## 7. Result compartilhado
@@ -242,20 +413,22 @@ result.tryAsync(...)
 result.combine(...)
 ```
 
-A importação deve seguir a convenção de barrel exports do projeto:
+A importação deve seguir a convenção de barrel exports do projeto.
+
+No projeto atual o alias `@/*` aponta para a raiz do repositório e os módulos ficam em `src/`:
 
 ```ts
 import {
   result,
   type Result,
-} from "@/modules/shared/result"
+} from "@/src/modules/shared/result"
 ```
 
 Se o diretório `src/modules/shared/result/` ainda não possuir `index.ts`, importar diretamente:
 
 ```ts
-import { result } from "@/modules/shared/result/result"
-import type { Result } from "@/modules/shared/result/result"
+import { result } from "@/src/modules/shared/result/result"
+import type { Result } from "@/src/modules/shared/result/result"
 ```
 
 e, se fizer sentido, criar o `index.ts` para expor a API pública do módulo.
@@ -311,6 +484,7 @@ Outro exemplo:
 ```ts
 type NameError = {
   readonly code:
+    | "NAME_INVALID_TYPE"
     | "NAME_REQUIRED"
     | "NAME_INVALID_FORMAT"
     | "NAME_INVALID_SPACING"
@@ -341,12 +515,17 @@ ERROR
 Preferir:
 
 ```text
+NAME_INVALID_TYPE
 NAME_REQUIRED
 NAME_INVALID_FORMAT
 NAME_INVALID_SPACING
 NAME_INVALID_CAPITALIZATION
 NAME_ABBREVIATION_NOT_ALLOWED
 ```
+
+O código deve representar a regra violada.
+
+`NAME_INVALID_TYPE` representa uma falha estrutural de entrada (o input não possui o tipo esperado) e deve ser retornado imediatamente sem executar as validações que dependem desse tipo.
 
 O código deve ser estável.
 
@@ -449,10 +628,12 @@ O `ResultError` não é obrigatório para todos os Value Objects.
 Quando um contexto possuir um erro específico, preferir um tipo específico:
 
 ```ts
-Result<Name, NameError>
-Result<Email, EmailError>
-Result<AppointmentDuration, AppointmentDurationError>
+Result<Name, NameError[]>
+Result<Email, EmailError[]>
+Result<AppointmentDuration, AppointmentDurationError[]>
 ```
+
+O erro agrupado em array indica que validações independentes podem acumular múltiplos erros antes de retornar a falha.
 
 > Observação: o `result-error.ts` existente no projeto declara `cause` e `metadata` como campos opcionais do `ResultError`. Isso não elimina a regra acima: para Value Objects, preferir tipos de erro específicos do contexto (`NameError`, `EmailError`, etc.) em vez de usar `ResultError` como erro de domínio.
 
@@ -532,9 +713,11 @@ A validação deve ser uma função pura.
 Fluxo:
 
 ```text
-input
+pré-condição estrutural
   ↓
-validate
+validações independentes
+  ↓
+result.combine
   ↓
 Result
 ```
@@ -548,6 +731,18 @@ input válido
     ↓
 Value Object imutável
 ```
+
+Nunca:
+
+```text
+input
+  ↓
+Value Object
+  ↓
+validação
+```
+
+porque isso permitiria a existência de Value Objects inválidos.
 
 Não misturar acesso a banco, APIs ou outros efeitos externos à validação do Value Object.
 
@@ -815,28 +1010,31 @@ Verificar letras maiúsculas/minúsculas via propriedades Unicode:
 
 ## 26. Implementação de referência do `Name`
 
+`Name` é um Value Object compartilhado: representa o conceito de nome de pessoas e pode ser reutilizado por `users`, `customers`, `employees`, `suppliers`, etc.
+
 Estrutura:
 
 ```text
-src/modules/users/
+src/modules/shared/value-object/name/
 ├── index.ts
 ├── name.ts
 └── name.test.ts
 ```
 
-Implementação de referência de `src/modules/users/name.ts`:
+Implementação de referência de `src/modules/shared/value-object/name/name.ts`:
 
 ```ts
 import {
   result,
   type Result,
-} from "@/modules/shared/result"
+} from "@/src/modules/shared/result"
 
 type Name = {
   readonly value: string
 }
 
 type NameErrorCode =
+  | "NAME_INVALID_TYPE"
   | "NAME_REQUIRED"
   | "NAME_INVALID_FORMAT"
   | "NAME_INVALID_SPACING"
@@ -879,11 +1077,12 @@ const isAbbreviation = (word: string): boolean => {
 }
 
 const hasInvalidCapitalization = (word: string): boolean => {
+  if (word.length === 0) return false
   if (isParticle(word)) return false
   return !/\p{Lu}/u.test(word[0])
 }
 
-const validateName = (input: string): Result<Name, NameError> => {
+const validateRequired = (input: string): Result<string, NameError> => {
   if (input.trim().length === 0) {
     return result.fail({
       code: "NAME_REQUIRED",
@@ -891,6 +1090,10 @@ const validateName = (input: string): Result<Name, NameError> => {
     })
   }
 
+  return result.ok(input)
+}
+
+const validateSpacing = (input: string): Result<string, NameError> => {
   if (hasInvalidSpacing(input)) {
     return result.fail({
       code: "NAME_INVALID_SPACING",
@@ -898,6 +1101,10 @@ const validateName = (input: string): Result<Name, NameError> => {
     })
   }
 
+  return result.ok(input)
+}
+
+const validateFormat = (input: string): Result<string, NameError> => {
   if (hasInvalidFormat(input)) {
     return result.fail({
       code: "NAME_INVALID_FORMAT",
@@ -905,31 +1112,65 @@ const validateName = (input: string): Result<Name, NameError> => {
     })
   }
 
-  const words = input.split(" ")
+  return result.ok(input)
+}
 
-  if (words.some(isAbbreviation)) {
+const validateAbbreviation = (input: string): Result<string, NameError> => {
+  if (input.split(" ").some(isAbbreviation)) {
     return result.fail({
       code: "NAME_ABBREVIATION_NOT_ALLOWED",
       message: "Abreviaturas não são permitidas.",
     })
   }
 
-  if (words.some(hasInvalidCapitalization)) {
+  return result.ok(input)
+}
+
+const validateCapitalization = (input: string): Result<string, NameError> => {
+  if (input.split(" ").some(hasInvalidCapitalization)) {
     return result.fail({
       code: "NAME_INVALID_CAPITALIZATION",
       message: "Cada palavra deve iniciar com letra maiúscula, exceto partículas permitidas.",
     })
   }
 
+  return result.ok(input)
+}
+
+const tryCreate = (input: unknown): Result<Name, NameError[]> => {
+  if (typeof input !== "string") {
+    return result.fail([
+      {
+        code: "NAME_INVALID_TYPE",
+        message: "O nome deve ser uma string.",
+      },
+    ])
+  }
+
+  const validation = result.combine(
+    validateRequired(input),
+    validateSpacing(input),
+    validateFormat(input),
+    validateAbbreviation(input),
+    validateCapitalization(input),
+  )
+
+  if (validation.fail) {
+    return validation
+  }
+
   return result.ok({ value: input })
 }
 
 const create = (value: string): Name => {
-  return { value }
-}
+  const nameResult = tryCreate(value)
 
-const tryCreate = (input: string): Result<Name, NameError> => {
-  return validateName(input)
+  if (nameResult.fail) {
+    const codes = nameResult.error.map((error) => error.code).join(", ")
+    throw new Error(`Pré-condição do Name violada: ${codes}.`)
+  }
+
+  return nameResult.value
 }
 
 const Name = {
@@ -938,17 +1179,20 @@ const Name = {
 }
 
 export { Name }
-export type { Name, NameError }
+export type { NameError }
 ```
 
 Observações sobre a implementação:
 
-- `create` não valida: assume pré-condição válida ou contexto excepcional.
-- `tryCreate` valida e retorna `Result<Name, NameError>`.
-- As funções de validação são puras e não dependem de infraestrutura.
+- `create` SEMPRE garante as invariantes antes de produzir o `Name`; se a pré-condição for violada, lança exception (`throw`).
+- `tryCreate` aceita `unknown`, valida estruturalmente o tipo e acumula erros de validações independentes com `result.combine`, retornando `Result<Name, NameError[]>`.
+- Quando o input possui tipo inválido, `tryCreate` retorna imediatamente `NAME_INVALID_TYPE` sem executar as validações que dependem de string.
+- As funções de validação são puras, independentes e não dependem de infraestrutura.
 - A capitalização usa `\p{Lu}`, que cobre letras maiúsculas Unicode (`Ângela`, `Érico`, `Cecília`).
 - Uma palavra de uma letra é rejeitada como abreviação, exceto partículas como `e`.
+- Palavras vazias (originadas de espaços extras) não geram erros falsos de capitalização: o erro de espaçamento já cobre esses casos.
 - Nenhum valor inválido é normalizado silenciosamente.
+- O `Name` nunca existe em estado inválido.
 
 ## 27. Testabilidade
 
@@ -1011,6 +1255,7 @@ Gonçalves
 Cada caso inválido deve também verificar o código de erro correspondente:
 
 ```text
+NAME_INVALID_TYPE
 NAME_REQUIRED
 NAME_INVALID_FORMAT
 NAME_INVALID_SPACING
@@ -1018,25 +1263,165 @@ NAME_INVALID_CAPITALIZATION
 NAME_ABBREVIATION_NOT_ALLOWED
 ```
 
+Testar também o acúmulo de erros de validações independentes:
+
+```text
+" joão  silva2"  →  [NAME_INVALID_SPACING, NAME_INVALID_FORMAT, NAME_INVALID_CAPITALIZATION]
+```
+
+Testar a falha estrutural de tipo com retorno imediato:
+
+```text
+123 → [NAME_INVALID_TYPE]
+null → [NAME_INVALID_TYPE]
+undefined → [NAME_INVALID_TYPE]
+{} → [NAME_INVALID_TYPE]
+```
+
+Testar também `create`:
+
+```ts
+Name.create("José Silva") // → Name válido
+Name.create("joão")       // → throw (pré-condição violada)
+Name.create("")           // → throw
+```
+
 Verificar que o Value Object criado é imutável (`readonly value`) e que `tryCreate` sempre retorna `success`/`fail` explícitos, sem `null`, `undefined`, `false` ou `throw`.
+
+A validação de erros acumulados deve verificar tanto a lista de códigos quanto a ordem deles.
 
 Os testes devem utilizar o framework de testes do projeto. Se o projeto ainda não possuir um framework configurado, verificar com o usuário antes de adicionar um.
 
 ## 28. Localização
 
-O Value Object deve ser colocado no contexto de negócio ao qual pertence.
+A localização de um Value Object depende do escopo do conceito, não do fato de uma entidade utilizá-lo.
+
+### Value Object compartilhado
+
+Quando o conceito possui significado de domínio reutilizável por múltiplos contextos, ele deve residir em:
+
+```text
+src/modules/shared/value-object/
+```
 
 Exemplo:
 
 ```text
-src/modules/users/
+src/modules/
+├── shared/
+│   ├── result/
+│   └── value-object/
+│       ├── name/
+│       ├── email/
+│       ├── phone/
+│       └── ...
+│
+├── users/
+├── customers/
+└── orders/
 ```
 
-para um `Name` relacionado diretamente ao usuário.
+Um Value Object compartilhado pode ser utilizado por diversos contextos:
 
-Não colocar automaticamente todos os Value Objects em `shared`.
+```text
+users
+customers
+employees
+suppliers
+orders
+```
 
-Um Value Object só deve estar em uma área compartilhada quando representar um conceito realmente compartilhado por múltiplos contextos.
+`Name` não pertence arquiteturalmente ao contexto `users` apenas porque `users` utiliza `Name`.
+
+O local correto é:
+
+```text
+Name
+↓
+src/modules/shared/value-object/name/
+```
+
+e não:
+
+```text
+src/modules/users/name.ts
+```
+
+O contexto consumidor utiliza o Value Object, mas não é o proprietário arquitetural dele.
+
+### Value Object específico de contexto
+
+Se o Value Object representa um conceito exclusivo de um único contexto de negócio, ele deve permanecer dentro desse contexto:
+
+```text
+src/modules/orders/order-number/
+src/modules/production/cutting-plan/
+src/modules/production/furniture-dimensions/
+```
+
+### Decisão
+
+Não mover um Value Object para `shared` porque é tecnicamente conveniente ou porque alguma entidade utiliza o conceito.
+
+A pergunta deve ser:
+
+> Esse conceito possui significado de domínio reutilizável por mais de um contexto?
+
+Se sim:
+
+```text
+shared/value-object/
+```
+
+Se não:
+
+```text
+contexto específico
+```
+
+Resumo:
+
+```text
+conceito compartilhado
+        ↓
+src/modules/shared/value-object/
+
+conceito específico
+        ↓
+src/modules/<context>/
+```
+
+### `shared` não é depósito genérico
+
+`shared` não deve se transformar em um depósito para qualquer código.
+
+Ele contém somente conceitos que realmente possuem escopo compartilhado entre diferentes contextos.
+
+A regra global do projeto (`AGENTS.md`) estabelece que `shared` deve conter somente abstrações realmente compartilhadas e não deve ser utilizado como depósito genérico de código.
+
+### Dependência
+
+Colocar um Value Object em `shared` significa que ele não deve depender de um contexto específico.
+
+Evitar:
+
+```text
+shared/value-object/name
+        ↓
+users
+```
+
+porque `shared` passaria a depender de `users`.
+
+A direção correta é:
+
+```text
+users ──────────┐
+customers ──────┼──→ shared/value-object/name
+employees ──────┘
+```
+
+> Contextos podem depender de Value Objects compartilhados, mas um Value Object compartilhado não deve depender de um contexto de negócio específico.
 
 ## 29. Nomenclatura
 
@@ -1053,6 +1438,14 @@ phone.ts
 appointment-duration.ts
 ```
 
+Um Value Object compartilhado fica em um diretório próprio dentro de `src/modules/shared/value-object/<nome>/`:
+
+```text
+src/modules/shared/value-object/name/
+src/modules/shared/value-object/email/
+src/modules/shared/value-object/phone/
+```
+
 Evitar nomes genéricos:
 
 ```text
@@ -1066,38 +1459,39 @@ quando o conceito puder ser identificado diretamente.
 
 ## 30. API pública
 
-Quando o Value Object for consumido por outros arquivos, ele deve ser exportado pelo `index.ts` correspondente, seguindo a regra de barrel exports do projeto.
+Todo Value Object compartilhado deve possuir um `index.ts` próprio, seguindo a regra de barrel exports do projeto.
 
 Exemplo:
 
 ```text
-src/modules/users/
+src/modules/shared/value-object/name/
 ├── index.ts
-└── name.ts
+├── name.ts
+└── name.test.ts
 ```
 
-Export:
+Export (preferir exports explícitos e evitar `export *` quando contrariar as regras do projeto):
 
 ```ts
 export { Name } from "./name"
-export type { Name, NameError } from "./name"
+export type { NameError } from "./name"
 ```
 
 O consumo deve preferencialmente utilizar a API pública:
 
 ```ts
-import { Name } from "@/modules/users"
+import { Name } from "@/src/modules/shared/value-object/name"
 ```
 
 em vez de depender diretamente da implementação interna:
 
 ```ts
-import { Name } from "@/modules/users/name"
+import { Name } from "@/src/modules/shared/value-object/name/name"
 ```
 
 quando o `index.ts` já expuser o Value Object.
 
-Sempre verificar se o `index.ts` do contexto foi atualizado com os novos exports.
+Sempre verificar se o `index.ts` do diretório do Value Object foi atualizado com os novos exports.
 
 ## 31. Regra para criação de um novo Value Object
 
@@ -1110,12 +1504,16 @@ Antes de criar um Value Object, identificar:
 5. Códigos de erro.
 6. Necessidade de `create`.
 7. Necessidade de `tryCreate`.
-8. Contexto de negócio responsável.
-9. Necessidade de compartilhamento.
+8. O conceito é compartilhado por múltiplos contextos ou exclusivo de um contexto?
+9. Localização resultante:
+   - compartilhado → `src/modules/shared/value-object/`
+   - específico → `src/modules/<context>/`
 10. API pública.
 11. Testes necessários.
 
 Não criar um Value Object apenas para encapsular um `string` ou `number` sem possuir regras ou invariantes relevantes.
+
+Não mover um Value Object para `shared` apenas por conveniência técnica: o conceito deve possuir significado reutilizável por mais de um contexto.
 
 ## 32. Regra para `create` e `tryCreate`
 
@@ -1129,17 +1527,39 @@ pré-condição válida
 Value Object
 ```
 
+ou:
+
+```text
+create
+  ↓
+pré-condição violada
+  ↓
+throw
+```
+
 ```text
 tryCreate
   ↓
-entrada potencialmente inválida
+entrada potencialmente inválida (unknown)
   ↓
-Result
+pré-condição estrutural
+  ↓
+tipo inválido → result.fail([erro estrutural]) imediatamente
+  ↓
+tipo válido → validações independentes
+  ↓
+result.combine(...)
+  ↓
+Result<ValueObject, Erros[]>
 ```
 
 `tryCreate` deve obrigatoriamente utilizar o `result` compartilhado.
 
-Não utilizar exceptions, `null`, `undefined` ou `false` para comunicar falhas esperadas.
+`create` deve obrigatoriamente garantir as invariantes; uma pré-condição violada em `create` é uma exceção verdadeira e deve usar `throw`.
+
+Não utilizar exceptions, `null`, `undefined` ou `false` como retorno normal de `tryCreate`.
+
+Acumular erros de validações independentes em `tryCreate`; não retornar apenas o primeiro erro.
 
 ## 33. Regra contra duplicação
 
@@ -1176,15 +1596,19 @@ Listar entradas válidas
       ↓
 Listar entradas inválidas
       ↓
-Definir códigos de erro
+Definir códigos de erro (incluindo erro estrutural de tipo)
       ↓
 Escolher o contexto de negócio
       ↓
 Definir o tipo imutável
       ↓
-Implementar validação pura
+Implementar validações puras e independentes
       ↓
-Implementar create / tryCreate
+Implementar pré-condição estrutural (tipo) em tryCreate
+      ↓
+Combinar validações independentes (result.combine)
+      ↓
+Implementar create (garantindo invariantes) / tryCreate
       ↓
 Agrupar no objeto funcional
       ↓
@@ -1197,14 +1621,17 @@ Verificar lint e typecheck
 
 Antes de finalizar, verificar:
 
-1. O arquivo está dentro de `src/modules/<context>/`.
+1. O arquivo está no local correto: `src/modules/shared/value-object/` (compartilhado) ou `src/modules/<context>/` (específico).
 2. O nome está em `kebab-case`.
 3. O tipo é imutável (`readonly`).
 4. `tryCreate` usa o `result` compartilhado.
-5. Os erros são específicos do domínio.
-6. Não há acesso à infraestrutura.
-7. O `index.ts` do contexto foi atualizado.
-8. Existem testes para os valores válidos, inválidos e limites.
+5. `tryCreate` aceita `unknown` e valida o tipo antes das demais validações.
+6. `tryCreate` acumula erros com `result.combine` quando existem validações independentes.
+7. `create` garante as invariantes e lança exception apenas quando a pré-condição é violada.
+8. Os erros são específicos do domínio.
+9. Não há acesso à infraestrutura.
+10. O `index.ts` do diretório do Value Object foi atualizado.
+11. Existem testes para os valores válidos, inválidos, limites, acúmulo de erros e tipo inválido.
 
 ## 35. Verificação final
 
@@ -1230,17 +1657,33 @@ Invariantes do domínio
    ↓
 create / tryCreate
    ↓
-Value Object imutável
+Value Object imutável (nunca inválido)
 ```
 
 Quando a entrada puder ser inválida:
 
 ```text
-tryCreate
+tryCreate(unknown)
    ↓
-result.ok(...)
-   ou
-result.fail(...)
+pré-condição estrutural (tipo)
+   ↓
+tipo inválido → result.fail([erro estrutural]) imediatamente
+   ↓
+tipo válido → validações independentes
+   ↓
+result.combine(...)
+   ↓
+result.ok(...)   ou   result.fail([...erros...])
+```
+
+Quando a pré-condição de `create` for violada:
+
+```text
+create
+   ↓
+pré-condição violada
+   ↓
+throw
 ```
 
 A arquitetura de erros deve seguir:
@@ -1249,28 +1692,27 @@ A arquitetura de erros deve seguir:
 Erro
   ↓
 O que deu errado no domínio?
-
-
-cause
-  ↓
-Qual foi a causa original?
-
-
-metadata
-  ↓
-Qual contexto adicional é útil?
 ```
+
+quando existirem validações independentes, a falha pode conter uma lista de erros:
+
+```text
+result.fail([erro1, erro2, ...])
+```
+
+`cause` e `metadata` seguem o modelo do `result` compartilhado.
 
 O Value Object deve:
 
 - proteger suas invariantes;
+- nunca existir em estado inválido;
 - ser imutável;
 - ser funcional;
 - ser fortemente tipado;
 - não depender de infraestrutura;
 - possuir erros específicos e identificáveis;
 - ser facilmente testável;
-- possuir `create` e `tryCreate`;
+- possuir `create` (garante invariantes; pré-condição violada → `throw`) e `tryCreate` (aceita `unknown`; acumula erros e retorna `Result`);
 - utilizar o `result` compartilhado em `tryCreate`;
 - não duplicar suas validações em outras camadas.
 

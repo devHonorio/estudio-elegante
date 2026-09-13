@@ -67,6 +67,37 @@ src/modules/users/
 Não criar subpastas apenas por organização estética.
 Criar uma pasta somente quando representar uma separação real de responsabilidade ou quando houver quantidade suficiente de arquivos que justifique a organização.
 
+## Conceitos compartilhados entre contextos
+
+A regra de "colocar todo código no contexto ao qual pertence" possui uma exceção: conceitos com escopo realmente compartilhado entre múltiplos contextos.
+
+Esses conceitos devem ficar em `src/modules/shared/`, organizados por responsabilidade:
+
+```text
+src/modules/shared/result/
+src/modules/shared/value-object/
+```
+
+Value Objects de domínio com significado reutilizável por mais de um contexto residem em `src/modules/shared/value-object/`:
+
+```text
+src/modules/shared/value-object/name/
+src/modules/shared/value-object/email/
+src/modules/shared/value-object/phone/
+```
+
+O contexto consumidor utiliza o Value Object, mas não é o proprietário arquitetural dele.
+
+Value Objects que representam conceitos exclusivos de um único contexto permanecem dentro desse contexto:
+
+```text
+src/modules/orders/order-number/
+src/modules/production/cutting-plan/
+```
+
+`shared` não deve ser utilizado como depósito genérico de código.
+Somente abstrações/conceitos que realmente possuem escopo compartilhado entre diferentes contextos devem ser movidos para `shared`.
+
 ## Casos de uso
 
 Os casos de uso devem ficar dentro de `src/modules/<context>/usecase/`.
@@ -1054,6 +1085,8 @@ INVALID_APPOINTMENT_TIME
 
 Não utilizar exceptions para representar condições normais e previsíveis do domínio.
 Exceptions devem representar situações excepcionais, bugs ou falhas inesperadas.
+
+Exceção coerente: uma factory de domínio com pré-condição garantida (por exemplo `Name.create(...)`) pode lançar exception quando a pré-condição for violada, pois isso representa um bug de uso (chamada inválida), e não uma falha previsível de entrada. A porta de entrada segura para valores potencialmente inválidos é o `tryCreate`, que retorna `Result` acumulando erros previsíveis.
 
 Quando uma exception precisar entrar no fluxo funcional, utilizar:
 
