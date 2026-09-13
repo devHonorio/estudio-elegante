@@ -19,25 +19,29 @@ type FailInfo = {
 
 type FailOptions = FailInfo
 
+type ResultValueOf<R extends Result<unknown, unknown>> = R extends ResultSuccess<
+  infer Value
+>
+  ? Value
+  : never
+
+type ResultErrorOf<R extends Result<unknown, unknown>> = R extends ResultFailure<
+  infer Error
+>
+  ? Error
+  : never
+
 type CombinedValues<Results extends readonly Result<unknown, unknown>[]> = {
-  -readonly [Index in keyof Results]: Results[Index] extends ResultSuccess<infer Value>
-    ? Value
-    : never
+  -readonly [Index in keyof Results]: ResultValueOf<Results[Index]>
 }
+
+type CombinedErrors<Results extends readonly Result<unknown, unknown>[]> = {
+  -readonly [Index in keyof Results]: ResultErrorOf<Results[Index]>
+}[number]
 
 type FailedResults<
   Results extends readonly Result<unknown, unknown>[],
-  Accumulated extends unknown[] = [],
-> = Results extends readonly [
-  infer Head,
-  ...infer Tail extends readonly Result<unknown, unknown>[],
-]
-  ? Head extends ResultFailure<infer Error>
-    ? FailedResults<Tail, [...Accumulated, Error]>
-    : Head extends ResultSuccess<unknown>
-      ? FailedResults<Tail, Accumulated>
-      : never
-  : Accumulated
+> = CombinedErrors<Results>[]
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -124,4 +128,5 @@ export type {
   FailOptions,
   FailedResults,
   CombinedValues,
+  CombinedErrors,
 }
