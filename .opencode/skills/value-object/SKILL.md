@@ -152,6 +152,19 @@ const Name = {
 }
 ```
 
+Dados derivados das invariantes podem ser expostos como propriedades imutáveis no próprio Value Object.
+
+Exemplo:
+
+```ts
+type Name = {
+  readonly value: string
+  readonly firstName: string
+}
+```
+
+Como `Name` garante ao menos duas palavras, `firstName` é derivado na construção e permanece imutável, sem necessidade de revalidação ou de métodos acessores.
+
 Não utilizar:
 
 - estado mutável;
@@ -488,6 +501,7 @@ type NameError = {
     | "NAME_REQUIRED"
     | "NAME_INVALID_FORMAT"
     | "NAME_INVALID_SPACING"
+    | "NAME_INVALID_WORD_COUNT"
     | "NAME_INVALID_CAPITALIZATION"
     | "NAME_ABBREVIATION_NOT_ALLOWED"
 
@@ -519,6 +533,7 @@ NAME_INVALID_TYPE
 NAME_REQUIRED
 NAME_INVALID_FORMAT
 NAME_INVALID_SPACING
+NAME_INVALID_WORD_COUNT
 NAME_INVALID_CAPITALIZATION
 NAME_ABBREVIATION_NOT_ALLOWED
 ```
@@ -526,6 +541,8 @@ NAME_ABBREVIATION_NOT_ALLOWED
 O código deve representar a regra violada.
 
 `NAME_INVALID_TYPE` representa uma falha estrutural de entrada (o input não possui o tipo esperado) e deve ser retornado imediatamente sem executar as validações que dependem desse tipo.
+
+`NAME_INVALID_WORD_COUNT` representa a ausência do nome completo: o input não possui ao menos duas palavras (nome e sobrenome).
 
 O código deve ser estável.
 
@@ -766,6 +783,8 @@ Utilizar `Name` como exemplo de implementação para a skill.
 
 O `Name` possui regras específicas de domínio.
 
+`Name` representa um nome completo. Por isso, deve possuir, no mínimo, duas palavras: nome e sobrenome.
+
 A entrada deve conter somente caracteres alfabéticos e espaços simples.
 
 ### Caracteres permitidos
@@ -775,21 +794,20 @@ Permitir:
 - letras;
 - letras com acentuação;
 - caracteres Unicode que sejam letras;
-- um único espaço entre palavras.
+- um único espaço entre palavras;
+- no mínimo duas palavras (nome e sobrenome).
 
 Exemplos válidos:
 
 ```text
-José
-João
-Márcio
-André
 João Pedro
 José Honorio
 Ana Júlia
 Luís Felipe
-Cecília
-Gonçalves
+Maria da Silva
+José dos Santos
+Cecília Meireles
+Gonçalves Dias
 ```
 
 Caracteres como:
@@ -869,10 +887,10 @@ O formato válido deve possuir exatamente um espaço entre palavras.
 Exemplos:
 
 ```text
-João
 João Pedro
 José Honorio
 Ana Paula Silva
+Carlos Eduardo
 ```
 
 ## 22. Capitalização em `Name`
@@ -882,8 +900,8 @@ A primeira letra de cada nome deve ser maiúscula.
 Exemplos:
 
 ```text
-João
-Maria
+João Pedro
+Maria da Silva
 José Honorio
 Ana Paula
 Carlos Eduardo
@@ -892,8 +910,8 @@ Carlos Eduardo
 Inválidos:
 
 ```text
-joão
-maria
+joão pedro
+maria da silva
 josé honório
 ana Paula
 ```
@@ -992,13 +1010,13 @@ Não assumir que caracteres válidos pertencem somente ao intervalo ASCII.
 Exemplos que devem poder ser aceitos:
 
 ```text
-José
-João
-Ângela
-Érico
-Luísa
-Gonçalves
-Cássia
+José Honorio
+João Pedro
+Ângela Maria
+Érico Veríssimo
+Luísa Clara
+Gonçalves Dias
+Cássia Eller
 ```
 
 Verificar letras maiúsculas/minúsculas via propriedades Unicode:
@@ -1038,6 +1056,7 @@ type NameErrorCode =
   | "NAME_REQUIRED"
   | "NAME_INVALID_FORMAT"
   | "NAME_INVALID_SPACING"
+  | "NAME_INVALID_WORD_COUNT"
   | "NAME_INVALID_CAPITALIZATION"
   | "NAME_ABBREVIATION_NOT_ALLOWED"
 
@@ -1082,6 +1101,10 @@ const hasInvalidCapitalization = (word: string): boolean => {
   return !/\p{Lu}/u.test(word[0])
 }
 
+const isFullName = (value: string): boolean => {
+  return value.split(" ").length >= 2
+}
+
 const validateRequired = (input: string): Result<string, NameError> => {
   if (input.trim().length === 0) {
     return result.fail({
@@ -1109,6 +1132,17 @@ const validateFormat = (input: string): Result<string, NameError> => {
     return result.fail({
       code: "NAME_INVALID_FORMAT",
       message: "O nome deve conter somente letras e um único espaço entre palavras.",
+    })
+  }
+
+  return result.ok(input)
+}
+
+const validateWordCount = (input: string): Result<string, NameError> => {
+  if (!isFullName(input)) {
+    return result.fail({
+      code: "NAME_INVALID_WORD_COUNT",
+      message: "O nome completo deve conter nome e sobrenome.",
     })
   }
 
@@ -1151,6 +1185,7 @@ const tryCreate = (input: unknown): Result<Name, NameError[]> => {
     validateRequired(input),
     validateSpacing(input),
     validateFormat(input),
+    validateWordCount(input),
     validateAbbreviation(input),
     validateCapitalization(input),
   )
@@ -1159,7 +1194,10 @@ const tryCreate = (input: unknown): Result<Name, NameError[]> => {
     return validation
   }
 
-  return result.ok({ value: input })
+  return result.ok({
+    value: input,
+    firstName: input.split(" ")[0],
+  })
 }
 
 const create = (value: string): Name => {
@@ -1187,10 +1225,12 @@ Observações sobre a implementação:
 - `create` SEMPRE garante as invariantes antes de produzir o `Name`; se a pré-condição for violada, lança exception (`throw`).
 - `tryCreate` aceita `unknown`, valida estruturalmente o tipo e acumula erros de validações independentes com `result.combine`, retornando `Result<Name, NameError[]>`.
 - Quando o input possui tipo inválido, `tryCreate` retorna imediatamente `NAME_INVALID_TYPE` sem executar as validações que dependem de string.
+- `Name` representa um nome completo: exige no mínimo duas palavras (nome e sobrenome), garantido por `validateWordCount` (`NAME_INVALID_WORD_COUNT`).
 - As funções de validação são puras, independentes e não dependem de infraestrutura.
 - A capitalização usa `\p{Lu}`, que cobre letras maiúsculas Unicode (`Ângela`, `Érico`, `Cecília`).
 - Uma palavra de uma letra é rejeitada como abreviação, exceto partículas como `e`.
 - Palavras vazias (originadas de espaços extras) não geram erros falsos de capitalização: o erro de espaçamento já cobre esses casos.
+- O `Name` expõe `firstName` como propriedade imutável derivada na construção (a invariante garante ao menos duas palavras, então a primeira palavra é o nome).
 - Nenhum valor inválido é normalizado silenciosamente.
 - O `Name` nunca existe em estado inválido.
 
@@ -1206,19 +1246,20 @@ Todo Value Object deve possuir testes cobrindo:
 - imutabilidade;
 - Unicode quando aplicável;
 - `create`;
-- `tryCreate`.
+- `tryCreate`;
+- propriedades derivadas das invariantes.
 
 Para `Name`, testar como válidos:
 
 ```text
-José
-João
 José Honorio
 João Pedro
 Maria da Silva
 José dos Santos
 João de Souza
 Carlos do Carmo
+Cecília Meireles
+Gonçalves Dias
 ```
 
 Como inválidos:
@@ -1226,10 +1267,11 @@ Como inválidos:
 ```text
 ""
 " "
-" João"
-"João "
+" José"
+"José "
+"José"          (sem sobrenome)
 "João  Silva"
-"joão"
+"joão silva"
 "João silva"
 "João-Silva"
 "João_Silva"
@@ -1243,13 +1285,13 @@ Como inválidos:
 Testar também os caracteres Unicode:
 
 ```text
-José
-João
-Márcio
-Ângela
-Luísa
-Cecília
-Gonçalves
+José Honorio
+João Pedro
+Márcio Silva
+Ângela Maria
+Luísa Clara
+Cecília Meireles
+Gonçalves Dias
 ```
 
 Cada caso inválido deve também verificar o código de erro correspondente:
@@ -1259,6 +1301,7 @@ NAME_INVALID_TYPE
 NAME_REQUIRED
 NAME_INVALID_FORMAT
 NAME_INVALID_SPACING
+NAME_INVALID_WORD_COUNT
 NAME_INVALID_CAPITALIZATION
 NAME_ABBREVIATION_NOT_ALLOWED
 ```
@@ -1267,6 +1310,7 @@ Testar também o acúmulo de erros de validações independentes:
 
 ```text
 " joão  silva2"  →  [NAME_INVALID_SPACING, NAME_INVALID_FORMAT, NAME_INVALID_CAPITALIZATION]
+"joão"           →  [NAME_INVALID_WORD_COUNT, NAME_INVALID_CAPITALIZATION]
 ```
 
 Testar a falha estrutural de tipo com retorno imediato:
@@ -1282,8 +1326,17 @@ Testar também `create`:
 
 ```ts
 Name.create("José Silva") // → Name válido
+Name.create("José")       // → throw (sem sobrenome)
 Name.create("joão")       // → throw (pré-condição violada)
 Name.create("")           // → throw
+```
+
+Testar também a propriedade derivada:
+
+```ts
+const name = Name.create("Maria da Silva")
+
+name.firstName // "Maria"
 ```
 
 Verificar que o Value Object criado é imutável (`readonly value`) e que `tryCreate` sempre retorna `success`/`fail` explícitos, sem `null`, `undefined`, `false` ou `throw`.
