@@ -2691,3 +2691,108 @@ A regra fundamental é:
 > **Modelar o domínio por significado e modelar as dependências pela capacidade necessária.**
 
 <!-- END: ddd-and-interface-segregation -->
+
+<!-- BEGIN:identity-and-business-profiles -->
+# Identidade de autenticação e perfis de negócio
+
+`Identity` pertence ao contexto de autenticação e representa exclusivamente uma identidade autenticável. Sua responsabilidade é identificar quem se autentica e manter somente os dados e invariantes necessários à autenticação, como `IdentityId`, telefone e informações de ciclo de vida da identidade.
+
+`Identity` não representa um usuário global do sistema e não deve possuir dados específicos de perfis de negócio. Em particular, não adicionar a `Identity` campos como:
+
+```text
+name
+accountType
+role
+customer
+employee
+business
+administrator
+```
+
+Cliente final, funcionário, proprietário, membro de empresa e administrador da plataforma são conceitos pertencentes aos seus respectivos bounded contexts. Cada contexto deve possuir seu próprio modelo e sua própria linguagem ubíqua, relacionando o perfil à autenticação por meio de `IdentityId` quando essa associação for necessária.
+
+O mesmo nome de atributo não implica o mesmo conceito de domínio. O significado de `name` depende do contexto:
+
+```text
+Customer.name
+    = nome pessoal do cliente
+
+Employee.name
+    = nome pessoal do funcionário
+
+Business.name
+    = nome da empresa, não nome pessoal
+```
+
+Nomes pessoais podem reutilizar o Value Object compartilhado `Name` somente quando possuírem o mesmo significado e as mesmas invariantes. Nomes empresariais devem utilizar conceitos próprios, como `BusinessName`, `LegalName` ou `TradeName`, quando suas invariantes forem conhecidas e houver um contexto consumidor real. Não criar esses Value Objects antecipadamente apenas para reservar uma arquitetura futura.
+
+Uma empresa não se autentica diretamente. A autenticação pertence a uma pessoa identificada por `Identity`; o acesso à empresa deve ser representado por uma relação contextual, como proprietário, membro ou funcionário:
+
+```text
+Identity
+    ↓ IdentityId
+BusinessOwner / BusinessMember / Employee
+    ↓
+Business
+```
+
+Não inferir o tipo de perfil a partir de `Identity` e não armazenar uma classificação global de usuário nela. A existência e as regras do perfil devem ser determinadas pelo contexto de negócio correspondente. Uma mesma identidade pode se relacionar com mais de um perfil quando as regras do negócio permitirem.
+
+Ao implementar onboarding ou login, manter a separação conceitual:
+
+```text
+verificação do telefone
+        ↓
+autenticação / Identity
+        ↓
+criação ou localização do perfil no contexto de negócio
+```
+
+Dados coletados durante o onboarding devem ser entregues ao contexto que possui seu significado. O fato de um dado ser coletado logo após a autenticação não o torna automaticamente propriedade de `Identity`.
+<!-- END:identity-and-business-profiles -->
+
+<!-- BEGIN:context-internal-organization -->
+# Organização interna dos contextos de negócio
+
+A estrutura interna de cada contexto deve agrupar código por conceito e por responsabilidade real, mantendo simples a descoberta de sua API principal.
+
+O conceito principal do contexto deve permanecer na raiz quando essa localização expressar claramente seu papel. Por exemplo, no contexto `identity`, `identity.entity.ts`, `identity-error.ts` e `identity.test.ts` permanecem na raiz.
+
+Conceitos secundários que possuam vários arquivos coesos podem ter um diretório próprio. Entidade, erros, testes e capacidades específicas desse conceito devem permanecer próximos:
+
+```text
+src/modules/identity/
+├── identity.entity.ts
+├── identity-error.ts
+├── identity.test.ts
+├── verification-code/
+│   ├── index.ts
+│   ├── verification-code.entity.ts
+│   ├── verification-code-error.ts
+│   ├── verification-code.test.ts
+│   └── provider/
+│       ├── index.ts
+│       ├── verification-code-sender.provider.ts
+│       └── verification-code-hash-verifier.provider.ts
+├── repository/
+└── value-object/
+```
+
+Value Objects exclusivos do contexto devem ficar em `src/modules/<context>/value-object/`. Seus erros, factories e demais arquivos diretamente relacionados também devem ficar nessa pasta. Value Objects realmente compartilhados entre contextos permanecem em `src/modules/shared/value-object/`.
+
+Contratos de persistência e seus erros devem ficar em `src/modules/<context>/repository/`. Providers específicos de um conceito secundário devem ficar próximos desse conceito, como `verification-code/provider/`, em vez de ficarem soltos na raiz ou em uma pasta global sem significado de domínio.
+
+Todo diretório que represente uma API reutilizável deve possuir `index.ts` com exports explícitos. Consumidores devem preferir esse ponto de entrada e evitar deep imports quando o barrel já expuser a funcionalidade necessária. O `index.ts` do contexto continua sendo a fronteira que decide o que faz parte de sua API pública.
+
+Não criar pastas antecipadamente. Diretórios como `usecase/`, `provider/`, `repository/` ou uma pasta de conceito secundário só devem existir quando houver arquivos e uma separação real de responsabilidade que os justifique.
+
+Evitar estruturas que espalhem um mesmo conceito apenas por tipo técnico, como pastas globais `entities/`, `errors/`, `tests/` e `providers/`. A organização deve priorizar:
+
+```text
+Contexto de negócio
+    ↓
+Conceito ou responsabilidade coesa
+    ↓
+Arquivos relacionados
+```
+<!-- END:context-internal-organization -->
