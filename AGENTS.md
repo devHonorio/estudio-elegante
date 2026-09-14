@@ -36,6 +36,7 @@ Use a skill correspondente quando a tarefa envolver:
 - Value Objects ou validação de valores de domínio: `value-object`;
 - `Result`, erros funcionais, `try`, `tryAsync` ou `combine`: `result`;
 - repositories, persistência ou Interface Segregation: `repository`;
+- registro de decisões, referências ou conhecimento persistente: `project-knowledge`;
 - organização e criação de commits: `git-commit`.
 
 As implementações canônicas ficam em `.opencode/skills/`. Os arquivos em `.agents/skills/` existem somente para descoberta e encaminhamento.
