@@ -1404,13 +1404,31 @@ O contexto consumidor utiliza o Value Object, mas não é o proprietário arquit
 
 ### Value Object específico de contexto
 
-Se o Value Object representa um conceito exclusivo de um único contexto de negócio, ele deve permanecer dentro desse contexto:
+Se o Value Object representa um conceito exclusivo de um único contexto de negócio, ele deve permanecer dentro desse contexto, agrupado no diretório `value-object/`:
 
 ```text
-src/modules/orders/order-number/
-src/modules/production/cutting-plan/
-src/modules/production/furniture-dimensions/
+src/modules/orders/value-object/order-number.value-object.ts
+src/modules/production/value-object/cutting-plan.value-object.ts
+src/modules/production/value-object/furniture-dimensions.value-object.ts
+src/modules/identity/value-object/identity-id.value-object.ts
 ```
+
+Os arquivos relacionados ao Value Object também devem ficar nessa pasta, com nomes que expressem suas responsabilidades:
+
+```text
+src/modules/identity/
+├── value-object/
+│   ├── index.ts
+│   ├── identity-id.value-object.ts
+│   ├── identity-id-error.ts
+│   └── identity-id.factory.ts
+├── identity.entity.ts
+└── index.ts
+```
+
+Não deixar arquivos de Value Objects contextuais soltos na raiz do contexto quando houver mais de um arquivo relacionado ao conceito. O diretório `value-object/` representa uma separação real de responsabilidade e centraliza os Value Objects pertencentes ao contexto.
+
+Se existir apenas um Value Object contextual simples, ainda é permitido criar `value-object/` para manter previsível a localização dessa responsabilidade. Não criar uma subpasta adicional por Value Object sem necessidade; ela só se justifica quando a quantidade de arquivos ou uma API própria tornar essa separação útil.
 
 ### Decisão
 
@@ -1429,7 +1447,7 @@ shared/value-object/
 Se não:
 
 ```text
-contexto específico
+src/modules/<context>/value-object/
 ```
 
 Resumo:
@@ -1441,7 +1459,7 @@ src/modules/shared/value-object/
 
 conceito específico
         ↓
-src/modules/<context>/
+src/modules/<context>/value-object/
 ```
 
 ### `shared` não é depósito genérico
@@ -1499,6 +1517,13 @@ src/modules/shared/value-object/email/
 src/modules/shared/value-object/phone/
 ```
 
+Um Value Object específico de contexto fica em `src/modules/<context>/value-object/`:
+
+```text
+src/modules/identity/value-object/identity-id.value-object.ts
+src/modules/orders/value-object/order-number.value-object.ts
+```
+
 Evitar nomes genéricos:
 
 ```text
@@ -1546,6 +1571,22 @@ quando o `index.ts` já expuser o Value Object.
 
 Sempre verificar se o `index.ts` do diretório do Value Object foi atualizado com os novos exports.
 
+Para Value Objects contextuais, `src/modules/<context>/value-object/index.ts` deve centralizar os exports públicos da pasta quando ela for consumida por outras partes do contexto ou fizer parte da API pública do módulo. O `index.ts` do contexto decide quais desses exports atravessam sua fronteira pública.
+
+Preferir:
+
+```ts
+import { IdentityId } from "./value-object"
+```
+
+em vez de:
+
+```ts
+import { IdentityId } from "./value-object/identity-id.value-object"
+```
+
+quando o barrel da pasta já expuser o conceito.
+
 ## 31. Regra para criação de um novo Value Object
 
 Antes de criar um Value Object, identificar:
@@ -1560,7 +1601,7 @@ Antes de criar um Value Object, identificar:
 8. O conceito é compartilhado por múltiplos contextos ou exclusivo de um contexto?
 9. Localização resultante:
    - compartilhado → `src/modules/shared/value-object/`
-   - específico → `src/modules/<context>/`
+   - específico → `src/modules/<context>/value-object/`
 10. API pública.
 11. Testes necessários.
 
@@ -1674,7 +1715,7 @@ Verificar lint e typecheck
 
 Antes de finalizar, verificar:
 
-1. O arquivo está no local correto: `src/modules/shared/value-object/` (compartilhado) ou `src/modules/<context>/` (específico).
+1. O arquivo está no local correto: `src/modules/shared/value-object/` (compartilhado) ou `src/modules/<context>/value-object/` (específico).
 2. O nome está em `kebab-case`.
 3. O tipo é imutável (`readonly`).
 4. `tryCreate` usa o `result` compartilhado.
